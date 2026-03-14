@@ -78,8 +78,11 @@ function forecast(raw) {
         });
         const frac = +(alloc || {}).fraction || 0;
         if (!frac) return;
-        const inc = ["PhD Student","MSc Student"].includes(p.role) ? (+D.settings.stipendInc || 0.03) : (+D.settings.salaryInc || 0.035);
-        const sc = (+p.baseMonthly || 0) * Math.pow(1 + inc, Math.max(0, yrs(FC0, md)));
+        // Students: flat salary (no compounding). Staff/postdoc: annual escalation.
+        const isStudent = ["PhD Student","MSc Student"].includes(p.role);
+        const sc = isStudent
+          ? (+p.baseMonthly || 0)
+          : (+p.baseMonthly || 0) * Math.pow(1 + (+D.settings.salaryInc || 0.035), Math.max(0, yrs(FC0, md)));
         pers += sc * (p.benefits ? 1 + (+D.settings.benefitsRate || 0.22) : 1) * frac;
       });
       D.research.filter((r) => r && r.grantId === g.id).forEach((r) => {
@@ -833,9 +836,9 @@ function Settings({ data, setData, userName, setUserName }) {
       </Card>
       <Card>
         <SH title="Forecast assumptions" />
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = what each person earns RIGHT NOW. The annual increase % is applied from April 2025 forward only.</div>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = current salary or stipend. PhD & MSc students are treated as flat (no annual increase). Staff and postdocs escalate annually from April 2025 forward.</div>
         <Row label="Salary annual increase — staff & postdoc" desc="Compounded from hire date" k="salaryInc" step="0.001" min="0" max="0.2" fmt={fp} />
-        <Row label="Stipend annual increase — PhD & MSc" desc="Compounded from program start" k="stipendInc" step="0.001" min="0" max="0.2" fmt={fp} />
+
         <Row label="Benefits rate — staff & postdoc only" desc="CPP, EI, vacation, health as % of salary" k="benefitsRate" step="0.01" min="0" max="0.5" fmt={fp} />
       </Card>
       <Card>
