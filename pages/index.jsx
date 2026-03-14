@@ -77,7 +77,8 @@ function buildForecast(data) {
         const inc = isStudent ? +data.settings.stipendInc || 0.03 : +data.settings.salaryInc || 0.035;
         const scaled = (+p.baseMonthly || 0) * Math.pow(1 + inc, yrsFrom(p.startDate, md));
         const benMult = p.benefits ? 1 + (+data.settings.benefitsRate || 0.22) : 1;
-        pers += scaled * benMult * frac;
+        const tuition = p.role === "PhD Student" ? +data.settings.phdTuition || 0 : p.role === "MSc Student" ? +data.settings.mscTuition || 0 : 0;
+        pers += (scaled * benMult + tuition) * frac;
       });
 
       data.research.filter((r) => r.grantId === g.id).forEach((r) => {
@@ -135,7 +136,7 @@ function getStudentRec(p) {
 
 // ─── blank template data ────────────────────────────────────────────────────
 const BLANK = {
-  settings: { salaryInc: 0.035, stipendInc: 0.03, benefitsRate: 0.22 },
+  settings: { salaryInc: 0.035, stipendInc: 0.03, benefitsRate: 0.22, phdTuition: 708, mscTuition: 708 },
   grants: [], inflows: [], people: [], research: [],
 };
 
@@ -216,95 +217,6 @@ function SyncBanner({ syncState, meta, onSync, onSave, userName }) {
 }
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
-// ─── PER-GRANT CHART WITH SELECTOR ──────────────────────────────────────────
-function GrantSummaryCards({ g, gi, fc }) {
-  if (!g || !fc.length) return null;
-  const lastBal = fc[fc.length - 1][`b${gi}`] || 0;
-  const avgSpend = Math.round(fc.reduce((s, r) => s + (r[`sp${gi}`] || 0), 0) / fc.length);
-  const items = [
-    ["Total award", f$(g.totalAward)],
-    ["Avg monthly spend", f$(avgSpend)],
-    ["Forecast balance", f$(lastBal)],
-  ];
-  return (
-    <div className="mt-3 grid grid-cols-3 gap-3">
-      {items.map(([label, val]) => (
-        <div key={label} className="bg-gray-50 rounded-lg p-3 text-center">
-          <div className="text-xs text-gray-400 mb-1">{label}</div>
-          <div className={"text-base font-medium " + (label === "Forecast balance" && lastBal < 0 ? "text-red-600" : "text-gray-800")}>{val}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function PerGrantChart({ ag, fc }) {
-  const [selected, setSelected] = useState("all");
-  const selIdx = selected === "all" ? -1 : ag.findIndex(g => g.id === selected);
-  const selGrant = selIdx >= 0 ? ag[selIdx] : null;
-
-  return (
-    <>
-      <p className="text-xs text-gray-400 mb-3">
-        {selected === "all"
-          ? "Running balance for all active grants — click a grant to isolate it"
-          : `Running balance for ${selGrant ? selGrant.code : ""} — click "All grants" to zoom back out`}
-      </p>
-      <div className="flex gap-2 flex-wrap mb-3">
-        <button
-          onClick={() => setSelected("all")}
-          className={"px-3 py-1 rounded-md text-xs font-medium border transition-colors " +
-            (selected === "all"
-              ? "bg-blue-700 text-white border-blue-700"
-              : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50")}
-        >
-          All grants
-        </button>
-        {ag.map((g, gi) => (
-          <button
-            key={g.id}
-            onClick={() => setSelected(g.id)}
-            style={selected === g.id
-              ? { background: GRANT_COLORS[gi % GRANT_COLORS.length], borderColor: GRANT_COLORS[gi % GRANT_COLORS.length], color: "#fff" }
-              : {}}
-            className={"px-3 py-1 rounded-md text-xs font-medium border transition-colors " +
-              (selected === g.id
-                ? ""
-                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50")}
-          >
-            {g.code}
-          </button>
-        ))}
-      </div>
-      <ResponsiveContainer width="100%" height={260}>
-        <LineChart data={fc} margin={{ top: 4, right: 8, left: 8, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={5} />
-          <YAxis tickFormatter={f$k} tick={{ fontSize: 10 }} width={52} />
-          <Tooltip content={<TT />} />
-          <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
-          {selected === "all" && (
-            <Legend iconType="line" iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-          )}
-          {ag.map((g, gi) => (
-            <Line
-              key={g.id}
-              type="monotone"
-              dataKey={selected === "all" || selected === g.id ? `b${gi}` : `_hidden_${gi}`}
-              name={g.code}
-              stroke={GRANT_COLORS[gi % GRANT_COLORS.length]}
-              strokeWidth={selected === g.id ? 2.5 : 1.5}
-              dot={false}
-              connectNulls
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-      {selGrant && <GrantSummaryCards g={selGrant} gi={selIdx} fc={fc} />}
-    </>
-  );
-}
-
 function Dashboard({ data, fc }) {
   const [chartTab, setChartTab] = useState("portfolio");
   const ag = data.grants.filter((g) => g.active);
@@ -347,7 +259,20 @@ function Dashboard({ data, fc }) {
           </ResponsiveContainer>
         </>}
 
-        {chartTab==="pergrant"&&<PerGrantChart ag={ag} fc={fc}/>}
+        {chartTab==="pergrant"&&<>
+          <p className="text-xs text-gray-400 mb-3">Running balance per grant after IDC — which depletes first?</p>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={fc} margin={{top:4,right:8,left:8,bottom:4}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0"/>
+              <XAxis dataKey="label" tick={{fontSize:10}} interval={5}/>
+              <YAxis tickFormatter={f$k} tick={{fontSize:10}} width={52}/>
+              <Tooltip content={<TT/>}/>
+              <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5}/>
+              <Legend iconType="line" iconSize={10} wrapperStyle={{fontSize:11}}/>
+              {ag.map((g,gi)=><Line key={g.id} type="monotone" dataKey={`b${gi}`} name={g.code} stroke={GRANT_COLORS[gi%GRANT_COLORS.length]} strokeWidth={2} dot={false}/>)}
+            </LineChart>
+          </ResponsiveContainer>
+        </>}
 
         {chartTab==="burn"&&<>
           <p className="text-xs text-gray-400 mb-3">Monthly spend stacked by grant (includes IDC), inflows in teal</p>
@@ -803,7 +728,8 @@ function Settings({ data, setData, userName, setUserName }) {
         <Row label="Salary annual increase — staff & postdoc" desc="Compounded from hire date" k="salaryInc" step="0.001" min="0" max="0.2" fmt={fpct}/>
         <Row label="Stipend annual increase — PhD & MSc" desc="Compounded from program start" k="stipendInc" step="0.001" min="0" max="0.2" fmt={fpct}/>
         <Row label="Benefits rate — staff & postdoc only" desc="CPP, EI, vacation, health as % of salary" k="benefitsRate" step="0.01" min="0" max="0.5" fmt={fpct}/>
-
+        <Row label="PhD tuition per month" desc="Annual tuition divided by 12" k="phdTuition" step="50" min="0" max="5000" fmt={f$}/>
+        <Row label="MSc tuition per month" desc="Annual tuition divided by 12" k="mscTuition" step="50" min="0" max="5000" fmt={f$}/>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-4">
