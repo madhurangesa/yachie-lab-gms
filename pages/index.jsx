@@ -69,7 +69,14 @@ function forecast(raw) {
       D.people.forEach((p) => {
         if (!active(p, md)) return;
         const allocs = Array.isArray(p.allocations) ? p.allocations : [];
-        const frac = +(allocs.find((a) => a && a.grantId === g.id) || {}).fraction || 0;
+        // Find allocation active in this month (check from/to date range)
+        const alloc = allocs.find((a) => {
+          if (!a || a.grantId !== g.id) return false;
+          if (a.from && md < new Date(a.from + "T00:00:00Z")) return false;
+          if (a.to   && md > new Date(a.to   + "T00:00:00Z")) return false;
+          return true;
+        });
+        const frac = +(alloc || {}).fraction || 0;
         if (!frac) return;
         const inc = ["PhD Student","MSc Student"].includes(p.role) ? (+D.settings.stipendInc || 0.03) : (+D.settings.salaryInc || 0.035);
         const sc = (+p.baseMonthly || 0) * Math.pow(1 + inc, Math.max(0, yrs(FC0, md)));
@@ -549,17 +556,44 @@ function People({ data, setData }) {
               <FL label="Notes"><Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
             </div>
             <div className="mb-3">
-              <div className="text-xs text-gray-500 mb-2">Grant allocations (must sum to 1.0)</div>
+              <div className="text-xs text-gray-500 mb-2">
+                Grant allocations — fractions must sum to 1.0 <em>for any given month</em>.
+                Use From/To dates to schedule moves between grants. Leave both blank if the allocation applies for the whole forecast.
+                Add a new row when moving someone to a different grant.
+              </div>
               {(form.allocations||[]).map((a, i) => (
-                <div key={i} className="flex gap-2 mb-2 items-center">
-                  <div className="flex-[2]">
-                    <Sel value={a.grantId} onChange={(e) => updAlloc(i, "grantId", e.target.value)}>
-                      <option value="">Select grant...</option>
-                      {D.grants.map((g) => <option key={g.id} value={g.id}>{g.code} — {g.fullName}</option>)}
-                    </Sel>
+                <div key={i} className="bg-gray-50 rounded-lg p-3 mb-2 border border-gray-200">
+                  <div className="flex gap-2 mb-2 items-end flex-wrap">
+                    <div className="flex-[2] min-w-[160px]">
+                      <div className="text-xs text-gray-400 mb-1">Grant</div>
+                      <Sel value={a.grantId} onChange={(e) => updAlloc(i, "grantId", e.target.value)}>
+                        <option value="">Select grant...</option>
+                        {D.grants.map((g) => <option key={g.id} value={g.id}>{g.code} — {g.fullName}</option>)}
+                      </Sel>
+                    </div>
+                    <div className="w-20">
+                      <div className="text-xs text-gray-400 mb-1">Fraction</div>
+                      <Inp type="number" min="0" max="1" step="0.1" placeholder="1.0" value={a.fraction} onChange={(e) => updAlloc(i, "fraction", e.target.value)} />
+                    </div>
+                    <div className="flex-1 min-w-[130px]">
+                      <div className="text-xs text-gray-400 mb-1">From (leave blank = always)</div>
+                      <Inp type="date" value={a.from||""} onChange={(e) => updAlloc(i, "from", e.target.value)} />
+                    </div>
+                    <div className="flex-1 min-w-[130px]">
+                      <div className="text-xs text-gray-400 mb-1">To (leave blank = ongoing)</div>
+                      <Inp type="date" value={a.to||""} onChange={(e) => updAlloc(i, "to", e.target.value)} />
+                    </div>
+                    <button onClick={() => removeAlloc(i)} className="text-red-400 hover:text-red-600 px-2 pb-1">x</button>
                   </div>
-                  <div className="flex-1"><Inp type="number" min="0" max="1" step="0.1" placeholder="0.5" value={a.fraction} onChange={(e) => updAlloc(i, "fraction", e.target.value)} /></div>
-                  <button onClick={() => removeAlloc(i)} className="text-red-400 hover:text-red-600 px-2">x</button>
+                  {a.from && a.to && (
+                    <div className="text-xs text-blue-600">{a.from} → {a.to}</div>
+                  )}
+                  {a.from && !a.to && (
+                    <div className="text-xs text-green-600">{a.from} → ongoing</div>
+                  )}
+                  {!a.from && !a.to && (
+                    <div className="text-xs text-gray-400">Active for full forecast period</div>
+                  )}
                 </div>
               ))}
               <Btn onClick={addAlloc} v="secondary" sm>+ Add grant slot</Btn>
@@ -587,7 +621,14 @@ function People({ data, setData }) {
                     <td className="py-2 pr-3 text-xs">
                       {(p.allocations||[]).filter((a) => a.grantId).map((a, i) => {
                         const g = D.grants.find((g) => g.id === a.grantId);
-                        return <span key={i} className="mr-1"><Badge c="blue">{g?g.code:"?"}</Badge> {(+a.fraction*100).toFixed(0)}%</span>;
+                        const dated = a.from || a.to;
+                        return (
+                          <span key={i} className="mr-1 inline-block mb-0.5">
+                            <Badge c="blue">{g?g.code:"?"}</Badge>
+                            <span className="text-xs text-gray-600 ml-0.5">{(+a.fraction*100).toFixed(0)}%</span>
+                            {dated && <span className="text-xs text-gray-400 ml-0.5">({a.from?a.from.slice(0,7):"start"}→{a.to?a.to.slice(0,7):"open"})</span>}
+                          </span>
+                        );
                       })}
                     </td>
                     <td className="py-2 pr-3 text-xs text-gray-500">{p.fellowship||"—"}</td>
