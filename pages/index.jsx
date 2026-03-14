@@ -434,7 +434,7 @@ function Grants({ data, setData }) {
               {d.grants.map(g=>(
                 <tr key={g.id} className={`border-b border-gray-50 ${!g.active?"opacity-50":""}`}>
                   <td className="py-2 pr-3">
-                    <button onClick={()=>setData(prev=>{const s=safe(prev);return{...s,grants:s.grants.map(x=>x.id===g.id?{...x,active:!x.active}:x);})})}
+                    <button onClick={()=>setData(prev=>{const s=safe(prev);return{...s,grants:s.grants.map(x=>x.id===g.id?{...x,active:!x.active}:x)}})}
                       className={`px-2 py-0.5 rounded text-xs font-medium ${g.active?"bg-green-100 text-green-800":"bg-gray-100 text-gray-500"}`}>
                       {g.active?"YES":"NO"}
                     </button>
@@ -448,7 +448,7 @@ function Grants({ data, setData }) {
                   <td className="py-2 pr-3 text-xs text-gray-400 max-w-[120px] truncate">{g.notes}</td>
                   <td className="py-2 whitespace-nowrap">
                     <Btn onClick={()=>setForm({...g})} variant="ghost" sm>Edit</Btn>
-                    <Btn onClick={()=>{if(window.confirm("Delete this grant and all linked data?"))setData(prev=>{const s=safe(prev);return{...s,grants:s.grants.filter(x=>x.id!==g.id),inflows:s.inflows.filter(i=>i.grantId!==g.id),research:s.research.filter(r=>r.grantId!==g.id)};});}} variant="danger" sm>Del</Btn>
+                    <Btn onClick={()=>{if(window.confirm("Delete this grant and all linked data?"))setData(prev=>{const s=safe(prev);return{...s,grants:s.grants.filter(x=>x.id!==g.id),inflows:s.inflows.filter(i=>i.grantId!==g.id),research:s.research.filter(r=>r.grantId!==g.id)}}); }} variant="danger" sm>Del</Btn>
                   </td>
                 </tr>
               ))}
@@ -483,7 +483,7 @@ function Grants({ data, setData }) {
                   <td className="py-2 pr-3 text-xs text-gray-400">{i.notes}</td>
                   <td className="py-2 whitespace-nowrap">
                     <Btn onClick={()=>setInfForm({...i})} variant="ghost" sm>Edit</Btn>
-                    <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,inflows:s.inflows.filter(x=>x.id!==i.id)};})} variant="danger" sm>Del</Btn>
+                    <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,inflows:s.inflows.filter(x=>x.id!==i.id)}})} variant="danger" sm>Del</Btn>
                   </td>
                 </tr>
               );
@@ -569,7 +569,7 @@ function People({ data, setData }) {
                     <td className="py-2 pr-3 text-xs text-gray-500">{p.fellowship||"—"}</td>
                     <td className="py-2 whitespace-nowrap">
                       <Btn onClick={()=>setForm({...p})} variant="ghost" sm>Edit</Btn>
-                      <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,people:s.people.filter(x=>x.id!==p.id)};})} variant="danger" sm>Del</Btn>
+                      <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,people:s.people.filter(x=>x.id!==p.id)}})} variant="danger" sm>Del</Btn>
                     </td>
                   </tr>
                 );
@@ -649,7 +649,7 @@ function Research({ data, setData }) {
                     <td className="py-2 pr-3 text-xs text-gray-400">{r.notes}</td>
                     <td className="py-2 whitespace-nowrap">
                       <Btn onClick={()=>setForm({...r})} variant="ghost" sm>Edit</Btn>
-                      <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,research:s.research.filter(x=>x.id!==r.id)};})} variant="danger" sm>Del</Btn>
+                      <Btn onClick={()=>setData(prev=>{const s=safe(prev);return{...s,research:s.research.filter(x=>x.id!==r.id)}})} variant="danger" sm>Del</Btn>
                     </td>
                   </tr>
                 );
