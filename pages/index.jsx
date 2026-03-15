@@ -97,7 +97,12 @@ function forecast(raw) {
           : baseThisMonth * Math.pow(1 + incRate, Math.max(0, yrs(FC0, md)));
         pers += sc * (p.benefits ? 1 + benRate : 1) * frac;
       });
-      D.research.filter((r) => r && r.grantId === g.id).forEach((r) => {
+      D.research.filter((r) => {
+        if (!r || r.grantId !== g.id) return false;
+        if (r.from && md < new Date(r.from + "-01T00:00:00Z")) return false;
+        if (r.to   && md > new Date(r.to   + "-01T00:00:00Z")) return false;
+        return true;
+      }).forEach((r) => {
         res += (+r.monthlyBase || 0) * Math.pow(1 + (+r.escalation || 0), Math.max(0, yrs(g.startDate || FC0, md)));
       });
       const idc = (pers + (g.type === "Capital" ? 0 : res)) * (g.idcExempt ? 0 : (+g.idcRate || 0));
@@ -731,7 +736,8 @@ function Research({ data, setData }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
   const [filter, setFilter] = useState("");
-  const BR = { grantId:"",category:"",monthlyBase:"",escalation:0,notes:"" };
+  const [monthFilter, setMonthFilter] = useState("");
+  const BR = { grantId:"",category:"",monthlyBase:"",escalation:0,from:"",to:"",notes:"" };
 
   function saveResearch() {
     if (!form.grantId||!form.category||!form.monthlyBase) return alert("Grant, category and monthly base required.");
@@ -751,7 +757,15 @@ function Research({ data, setData }) {
     total: D.research.filter((r) => r.grantId===g.id).reduce((s,r) => s+(+r.monthlyBase||0), 0),
     count: D.research.filter((r) => r.grantId===g.id).length,
   }));
-  const filtered = filter ? D.research.filter((r) => r.category.toLowerCase().includes(filter.toLowerCase())) : D.research;
+  const filtered = D.research.filter((r) => {
+    if (filter && !r.category.toLowerCase().includes(filter.toLowerCase())) return false;
+    if (monthFilter) {
+      const md = new Date(monthFilter + "-01T00:00:00Z");
+      if (r.from && md < new Date(r.from + "-01T00:00:00Z")) return false;
+      if (r.to   && md > new Date(r.to   + "-01T00:00:00Z")) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-4">
@@ -778,15 +792,40 @@ function Research({ data, setData }) {
               </FL>
               <FL label="Monthly base ($) *"><Inp type="number" value={form.monthlyBase} onChange={(e) => setForm((f) => ({...f,monthlyBase:e.target.value}))} /></FL>
               <FL label="Escalation (%/yr)"><Inp type="number" step="0.01" min="0" max="1" value={form.escalation} onChange={(e) => setForm((f) => ({...f,escalation:e.target.value}))} placeholder="0.03 = 3%/yr" /></FL>
+              <FL label="From month (YYYY-MM, blank = always)"><Inp type="month" value={form.from||""} onChange={(e) => setForm((f) => ({...f,from:e.target.value}))} /></FL>
+              <FL label="To month (YYYY-MM, blank = ongoing)"><Inp type="month" value={form.to||""} onChange={(e) => setForm((f) => ({...f,to:e.target.value}))} /></FL>
               <FL label="Notes"><Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
             </div>
             <div className="flex gap-2"><Btn onClick={saveResearch}>Save</Btn><Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn></div>
           </div>
         )}
-        <div className="mb-3"><Inp value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by category..." className="max-w-xs" /></div>
+        <div className="flex gap-3 mb-3 flex-wrap items-end">
+          <div>
+            <div className="text-xs text-gray-400 mb-1">Filter by category</div>
+            <Inp value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="e.g. Sequencing" className="max-w-xs" />
+          </div>
+          <div>
+            <div className="text-xs text-gray-400 mb-1">Filter by month (reconcile)</div>
+            <Inp type="month" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} className="w-40" />
+          </div>
+          {monthFilter && (
+            <div>
+              <div className="text-xs text-gray-400 mb-1">Total active this month</div>
+              <div className="text-sm font-medium text-blue-700 border border-gray-200 rounded-md px-3 py-1.5 bg-white">
+                {f$(filtered.reduce((s, r) => {
+                  const md = new Date(monthFilter + "-01T00:00:00Z");
+                  if (r.from && md < new Date(r.from + "-01T00:00:00Z")) return s;
+                  if (r.to   && md > new Date(r.to   + "-01T00:00:00Z")) return s;
+                  return s + (+r.monthlyBase || 0);
+                }, 0))}/mo
+              </div>
+            </div>
+          )}
+          {monthFilter && <Btn onClick={() => setMonthFilter("")} v="secondary" sm>Clear month</Btn>}
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Category","Grant","Monthly base","Escalation","Yr 2 est.","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Category","Grant","Monthly base","Esc.","Active period","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.map((r) => {
                 const g = D.grants.find((g) => g.id===r.grantId);
@@ -796,7 +835,11 @@ function Research({ data, setData }) {
                     <td className="py-2 pr-3"><Badge c="blue">{g?g.code:"—"}</Badge></td>
                     <td className="py-2 pr-3 font-medium">{f$(r.monthlyBase)}</td>
                     <td className={"py-2 pr-3 text-xs " + (+r.escalation>0?"text-amber-700 font-medium":"text-gray-400")}>{+r.escalation>0?fp(r.escalation):"—"}</td>
-                    <td className="py-2 pr-3 text-gray-600">{f$((+r.monthlyBase||0)*Math.pow(1+(+r.escalation||0),1))}</td>
+                    <td className="py-2 pr-3 text-xs text-gray-500">
+                      {r.from || r.to
+                        ? <span className="text-blue-600">{r.from||"start"} → {r.to||"ongoing"}</span>
+                        : <span className="text-gray-400">full forecast</span>}
+                    </td>
                     <td className="py-2 pr-3 text-xs text-gray-400">{r.notes}</td>
                     <td className="py-2 whitespace-nowrap">
                       <Btn onClick={() => setForm({...r})} v="ghost" sm>Edit</Btn>
