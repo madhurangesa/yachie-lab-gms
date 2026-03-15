@@ -299,22 +299,33 @@ function PerGrantChart({ ag, fc }) {
           <Tooltip content={<TT />} />
           <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
           {sel === "all" && <Legend iconType="line" iconSize={10} wrapperStyle={{ fontSize:11 }} />}
-          {/* Grant end date vertical lines */}
-          {grantsToMark.map((g, gi) => {
-            const lbl = endLabel(g);
-            if (!lbl) return null;
-            const color = GC[ag.indexOf(g) % GC.length];
-            return (
-              <ReferenceLine
-                key={"end-"+g.id}
-                x={lbl}
-                stroke={color}
-                strokeDasharray="6 3"
-                strokeWidth={1.5}
-                label={{ value: g.code + " ends", position: "insideTopRight", fontSize: 9, fill: color, fontWeight: 500 }}
-              />
-            );
-          })}
+          {/* Grant end date vertical lines — staggered to avoid overlap */}
+          {grantsToMark
+            .filter((g) => endLabel(g))
+            .sort((a, b) => (a.endDate||"") > (b.endDate||"") ? 1 : -1)
+            .map((g, idx) => {
+              const lbl = endLabel(g);
+              const color = GC[ag.indexOf(g) % GC.length];
+              const offsets = [10, 28, 46, 64, 82];
+              const offsetY = offsets[idx % offsets.length];
+              return (
+                <ReferenceLine
+                  key={"end-"+g.id}
+                  x={lbl}
+                  stroke={color}
+                  strokeDasharray="6 3"
+                  strokeWidth={1.5}
+                  label={{
+                    value: sel === "all" ? g.code : g.code + " ends",
+                    position: "insideTopRight",
+                    fontSize: 9,
+                    fill: color,
+                    fontWeight: 500,
+                    dy: offsetY,
+                  }}
+                />
+              );
+            })}
           {ag.map((g, gi) => {
             const key = "b" + gi;
             const show = sel === "all" || sel === g.id;
@@ -363,21 +374,37 @@ function Dashboard({ data, fc }) {
               <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
               <Tooltip content={<TT />} />
               <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
-              {ag.map((g, gi) => {
-                if (!g.endDate) return null;
-                const end = new Date(g.endDate + "T00:00:00Z");
+              {(() => {
+                // Sort grants by end date so stagger is consistent
+                const withEnd = ag
+                  .map((g, gi) => ({ g, gi }))
+                  .filter(({ g }) => g.endDate)
+                  .sort((a, b) => a.g.endDate > b.g.endDate ? 1 : -1);
                 const fc0 = new Date(FC0 + "T00:00:00Z");
-                const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
-                const clamped = Math.max(0, Math.min(fc.length - 1, mi));
-                const lbl = fc[clamped] ? fc[clamped].label : null;
-                if (!lbl) return null;
-                return (
-                  <ReferenceLine key={"pend-"+g.id} x={lbl}
-                    stroke={GC[gi%GC.length]} strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ value: g.code, position: "insideTopRight", fontSize: 9, fill: GC[gi%GC.length], fontWeight: 500 }}
-                  />
-                );
-              })}
+                // Stagger offsets cycle through different vertical positions
+                const offsets = [10, 28, 46, 64, 82];
+                return withEnd.map(({ g, gi }, idx) => {
+                  const end = new Date(g.endDate + "T00:00:00Z");
+                  const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
+                  const clamped = Math.max(0, Math.min(fc.length - 1, mi));
+                  const lbl = fc[clamped] ? fc[clamped].label : null;
+                  if (!lbl) return null;
+                  const offsetY = offsets[idx % offsets.length];
+                  return (
+                    <ReferenceLine key={"pend-"+g.id} x={lbl}
+                      stroke={GC[gi%GC.length]} strokeDasharray="6 3" strokeWidth={1.5}
+                      label={{
+                        value: g.code,
+                        position: "insideTopRight",
+                        fontSize: 9,
+                        fill: GC[gi%GC.length],
+                        fontWeight: 500,
+                        dy: offsetY,
+                      }}
+                    />
+                  );
+                });
+              })()}
               <Area type="monotone" dataKey="portBal" name="Portfolio balance" stroke="#185FA5" fill="#E6F1FB" strokeWidth={2} dot={false} />
             </AreaChart>
           </ResponsiveContainer>
