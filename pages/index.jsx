@@ -19,7 +19,10 @@ function addMo(base, n) {
 }
 function yrs(s, t) { if (!s) return 0; return Math.max(0, (t - new Date(s + "T00:00:00Z")) / 31557600000); }
 function active(p, d) {
-  if (!p || !p.active || !p.startDate) return false;
+  // Note: we do NOT check p.active here — the active toggle is UI-only (hides from Students tab).
+  // The end date is what controls when forecasting stops. This way marking someone inactive
+  // keeps their historical charges in the forecast up to their end date.
+  if (!p || !p.startDate) return false;
   if (d < new Date(p.startDate + "T00:00:00Z")) return false;
   if (p.endDate && d > new Date(p.endDate + "T00:00:00Z")) return false;
   return true;
@@ -133,21 +136,28 @@ function forecast(raw) {
 
 function recForStudent(p) {
   if (!p || !p.startDate) return null;
+  // If person has an end date already set, show Departing — no further recommendation needed
+  if (p.endDate) {
+    const mo = moLeft(p.endDate);
+    if (mo !== null && mo <= 6)  return { level:"high",   txt:"Departing within 6 months." };
+    if (mo !== null && mo <= 12) return { level:"medium", txt:"Departing within 12 months." };
+    return { level:"ok", txt:"End date set." };
+  }
   const y = yrs(p.startDate, new Date());
   if (p.role === "PhD Student") {
-    if (y >= 5) return { level:"critical",   txt:"Past 5-year mark. Immediate graduation plan + funding review." };
-    if (y >= 4) return { level:"high",       txt:"Year 4+: Set firm graduation date. Fund conditionally on milestones." };
-    if (y >= 3) return { level:"medium",     txt:"Year 3: Confirm thesis scope. Apply NSERC CGS-D this cycle." };
-    if (y >= 2) return { level:"fellowship", txt:"Year 2: Prime fellowship window. Apply NSERC CGS-D / Vanier / CIHR." };
-    return              { level:"ok",        txt:"Year 1: Focus on qualifying exams. Prepare CGS-M application." };
+    if (y >= 5) return { level:"critical",   txt:"Past 5-year mark." };
+    if (y >= 4) return { level:"high",       txt:"Year 4 — graduation plan needed." };
+    if (y >= 3) return { level:"medium",     txt:"Year 3 — confirm thesis scope." };
+    if (y >= 2) return { level:"fellowship", txt:"Year 2 — fellowship window." };
+    return              { level:"ok",        txt:"Year 1." };
   }
   if (p.role === "MSc Student") {
-    if (y >= 2) return { level:"high", txt:"Year 2+: Initiate thesis completion. Confirm submission date." };
-    return              { level:"ok",  txt:"Apply NSERC CGS-M if not held." };
+    if (y >= 2) return { level:"high", txt:"Year 2 — thesis completion." };
+    return              { level:"ok",  txt:"Year 1." };
   }
   if (p.role === "Postdoc") {
-    if (y >= 3) return { level:"medium", txt:"Senior postdoc: Discuss faculty track. Apply Banting Fellowship." };
-    return              { level:"ok",    txt:"Active postdoc — on track." };
+    if (y >= 3) return { level:"medium", txt:"Year 3+ postdoc." };
+    return              { level:"ok",    txt:"Active." };
   }
   return null;
 }
@@ -665,6 +675,13 @@ function People({ data, setData }) {
   function deletePerson(id) {
     setData(function(prev) { var s=safe(prev); s.people=s.people.filter(function(p){return p.id!==id;}); return s; });
   }
+  function togglePerson(id) {
+    setData(function(prev) {
+      var s = safe(prev);
+      s.people = s.people.map(function(p) { return p.id===id ? {...p, active:!p.active} : p; });
+      return s;
+    });
+  }
   function updAlloc(i, k, v) {
     setForm((f) => {
       const al = [...(f.allocations||[])];
@@ -780,7 +797,7 @@ function People({ data, setData }) {
         )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Name","Role","Yr","Start","Base/mo","Benefits","Allocations","Fellowship",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Name","Role","Yr","Start","Base/mo","Benefits","Allocations","Fellowship",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
               {D.people.map((p) => {
                 const y = yrs(p.startDate, new Date());
@@ -788,7 +805,13 @@ function People({ data, setData }) {
                 const yrStr = isS ? "Yr "+(Math.floor(y)+1) : p.role==="Postdoc" ? "PD"+(Math.floor(y)+1) : "—";
                 const late = (p.role==="PhD Student"&&y>=4)||(p.role==="MSc Student"&&y>=2);
                 return (
-                  <tr key={p.id} className="border-b border-gray-50">
+                  <tr key={p.id} className={"border-b border-gray-50 " + (!p.active ? "opacity-40" : "")}>
+                    <td className="py-2 pr-3">
+                      <button onClick={() => togglePerson(p.id)}
+                        className={"px-2 py-0.5 rounded text-xs font-medium " + (p.active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-500")}>
+                        {p.active ? "YES" : "NO"}
+                      </button>
+                    </td>
                     <td className="py-2 pr-3 font-medium">{p.name}</td>
                     <td className="py-2 pr-3"><Badge c={p.role==="Postdoc"?"blue":p.role==="Research Staff"?"gray":"green"}>{p.role}</Badge></td>
                     <td className={"py-2 pr-3 text-sm font-medium " + (late?"text-red-600":"text-gray-600")}>{yrStr}</td>
