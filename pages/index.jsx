@@ -245,14 +245,42 @@ function GrantSummary({ g, gi, fc }) {
 function PerGrantChart({ ag, fc }) {
   const [sel, setSel] = useState("all");
   const selIdx = sel === "all" ? -1 : ag.findIndex((g) => g.id === sel);
+
+  // Convert a grant end date to the nearest chart label for ReferenceLine x value
+  function endLabel(g) {
+    if (!g.endDate) return null;
+    const end = new Date(g.endDate + "T00:00:00Z");
+    const fc0 = new Date(FC0 + "T00:00:00Z");
+    if (end < fc0) return null;
+    // Find closest fc label
+    let best = null, bestDiff = Infinity;
+    fc.forEach((row) => {
+      // Parse "Apr '25" style label back to approximate date
+      const diff = Math.abs(end - new Date(g.endDate));
+      if (diff < bestDiff) { bestDiff = diff; best = row.label; }
+    });
+    // Simpler: compute month index into fc
+    const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
+    const clamped = Math.max(0, Math.min(fc.length - 1, mi));
+    return fc[clamped] ? fc[clamped].label : null;
+  }
+
+  // Grants to show end lines for: all when viewing all, or just selected
+  const grantsToMark = sel === "all" ? ag : ag.filter((g) => g.id === sel);
+
   const chartData = fc.map((row) => {
     const r = { label: row.label };
     ag.forEach((g, gi) => { if (sel === "all" || sel === g.id) r["b"+gi] = row["b"+gi]; });
     return r;
   });
+
   return (
     <div>
-      <p className="text-xs text-gray-400 mb-3">{sel === "all" ? "All active grants — click a name to isolate" : "Click 'All grants' to zoom back out"}</p>
+      <p className="text-xs text-gray-400 mb-2">{sel === "all" ? "All active grants — click a name to isolate" : "Click 'All grants' to zoom back out"}</p>
+      <div className="flex gap-1 flex-wrap items-center mb-1 text-xs text-gray-400">
+        <span className="inline-block w-6 border-t-2 border-dashed border-gray-400 mr-1" style={{verticalAlign:"middle"}}></span>
+        Dashed vertical lines = grant end dates
+      </div>
       <div className="flex gap-2 flex-wrap mb-3">
         <button onClick={() => setSel("all")} className={"px-3 py-1 rounded text-xs font-medium border " + (sel==="all" ? "bg-blue-700 text-white border-blue-700" : "bg-white text-gray-600 border-gray-300")}>All grants</button>
         {ag.map((g, gi) => (
@@ -263,7 +291,7 @@ function PerGrantChart({ ag, fc }) {
           </button>
         ))}
       </div>
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={280}>
         <LineChart data={chartData} margin={{ top:4, right:8, left:8, bottom:4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis dataKey="label" tick={{ fontSize:10 }} interval={5} />
@@ -271,6 +299,22 @@ function PerGrantChart({ ag, fc }) {
           <Tooltip content={<TT />} />
           <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
           {sel === "all" && <Legend iconType="line" iconSize={10} wrapperStyle={{ fontSize:11 }} />}
+          {/* Grant end date vertical lines */}
+          {grantsToMark.map((g, gi) => {
+            const lbl = endLabel(g);
+            if (!lbl) return null;
+            const color = GC[ag.indexOf(g) % GC.length];
+            return (
+              <ReferenceLine
+                key={"end-"+g.id}
+                x={lbl}
+                stroke={color}
+                strokeDasharray="6 3"
+                strokeWidth={1.5}
+                label={{ value: g.code + " ends", position: "insideTopRight", fontSize: 9, fill: color, fontWeight: 500 }}
+              />
+            );
+          })}
           {ag.map((g, gi) => {
             const key = "b" + gi;
             const show = sel === "all" || sel === g.id;
@@ -319,6 +363,21 @@ function Dashboard({ data, fc }) {
               <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
               <Tooltip content={<TT />} />
               <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
+              {ag.map((g, gi) => {
+                if (!g.endDate) return null;
+                const end = new Date(g.endDate + "T00:00:00Z");
+                const fc0 = new Date(FC0 + "T00:00:00Z");
+                const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
+                const clamped = Math.max(0, Math.min(fc.length - 1, mi));
+                const lbl = fc[clamped] ? fc[clamped].label : null;
+                if (!lbl) return null;
+                return (
+                  <ReferenceLine key={"pend-"+g.id} x={lbl}
+                    stroke={GC[gi%GC.length]} strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ value: g.code, position: "insideTopRight", fontSize: 9, fill: GC[gi%GC.length], fontWeight: 500 }}
+                  />
+                );
+              })}
               <Area type="monotone" dataKey="portBal" name="Portfolio balance" stroke="#185FA5" fill="#E6F1FB" strokeWidth={2} dot={false} />
             </AreaChart>
           </ResponsiveContainer>
