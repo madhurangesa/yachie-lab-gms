@@ -31,6 +31,13 @@ const FC0 = "2025-04-01";
 const FCN = 36;
 const GC = ["#185FA5","#0F6E56","#854F0B","#3B6D11","#534AB7","#993C1D","#5F5E5A","#712B13"];
 const ROLES = ["PhD Student","MSc Student","Postdoc","Research Staff","Undergraduate","Prospective Student"];
+function countMonths(from, to) {
+  if (!from || !to) return null;
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  return Math.max(0, (ty - fy) * 12 + (tm - fm) + 1);
+}
+
 const CATS = ["Sequencing-NGS","Sequencing-LongRead","Sequencing-Sanger","Animals-PerDiem","Animals-Procedures","Animals-Genotyping","Consumables-MolBio","Consumables-CellCulture","DNA-Synthesis","Computing-Cloud","Services-Core","Services-Maintenance","Travel","General"];
 const RS = {
   critical:   { bg:"bg-red-50",    border:"border-red-300",    badge:"bg-red-100 text-red-800",       lbl:"Critical" },
@@ -752,11 +759,16 @@ function Research({ data, setData }) {
     setData(function(prev) { var s=safe(prev); s.research=s.research.filter(function(r){return r.id!==id;}); return s; });
   }
 
-  const sums = D.grants.filter((g) => g.active).map((g) => ({
-    ...g,
-    total: D.research.filter((r) => r.grantId===g.id).reduce((s,r) => s+(+r.monthlyBase||0), 0),
-    count: D.research.filter((r) => r.grantId===g.id).length,
-  }));
+  const sums = D.grants.filter((g) => g.active).map((g) => {
+    const items = D.research.filter((r) => r.grantId===g.id);
+    const monthlyTotal = items.reduce((s,r) => s+(+r.monthlyBase||0), 0);
+    const periodTotal = items.reduce((s,r) => {
+      const mo = countMonths(r.from, r.to);
+      return s + (mo !== null ? (+r.monthlyBase||0) * mo : 0);
+    }, 0);
+    const hasPeriods = items.some((r) => r.from && r.to);
+    return { ...g, total: monthlyTotal, count: items.length, periodTotal, hasPeriods };
+  });
   const filtered = D.research.filter((r) => {
     if (filter && !r.category.toLowerCase().includes(filter.toLowerCase())) return false;
     if (monthFilter) {
@@ -771,10 +783,11 @@ function Research({ data, setData }) {
     <div className="space-y-4">
       <div className="flex gap-3 flex-wrap">
         {sums.map((g) => (
-          <div key={g.id} className="bg-white border border-gray-200 rounded-lg p-3 flex-1 min-w-[120px]">
+          <div key={g.id} className="bg-white border border-gray-200 rounded-lg p-3 flex-1 min-w-[140px]">
             <div className="text-xs text-gray-400 font-medium">{g.code}</div>
             <div className="text-lg font-medium text-gray-800 mt-1">{f$(g.total)}<span className="text-xs text-gray-400 font-normal">/mo</span></div>
-            <div className="text-xs text-gray-400">{g.count} items · IDC {g.idcExempt?"exempt":fp(g.idcRate)}</div>
+            {g.hasPeriods && <div className="text-xs text-blue-700 font-medium mt-0.5">{f$(g.periodTotal)} total committed</div>}
+            <div className="text-xs text-gray-400 mt-0.5">{g.count} items · IDC {g.idcExempt?"exempt":fp(g.idcRate)}</div>
           </div>
         ))}
       </div>
@@ -825,7 +838,7 @@ function Research({ data, setData }) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Category","Grant","Monthly base","Esc.","Active period","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Category","Grant","Monthly/mo","Esc.","Active period","Period total","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.map((r) => {
                 const g = D.grants.find((g) => g.id===r.grantId);
@@ -839,6 +852,11 @@ function Research({ data, setData }) {
                       {r.from || r.to
                         ? <span className="text-blue-600">{r.from||"start"} → {r.to||"ongoing"}</span>
                         : <span className="text-gray-400">full forecast</span>}
+                    </td>
+                    <td className="py-2 pr-3 text-sm">
+                      {r.from && r.to
+                        ? <span className="font-medium text-gray-800">{f$(+r.monthlyBase * countMonths(r.from, r.to))}<span className="text-xs text-gray-400 font-normal ml-1">({countMonths(r.from, r.to)}mo)</span></span>
+                        : <span className="text-gray-400 text-xs">ongoing</span>}
                     </td>
                     <td className="py-2 pr-3 text-xs text-gray-400">{r.notes}</td>
                     <td className="py-2 whitespace-nowrap">
