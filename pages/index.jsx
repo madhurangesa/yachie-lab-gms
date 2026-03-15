@@ -78,11 +78,20 @@ function forecast(raw) {
         });
         const frac = +(alloc || {}).fraction || 0;
         if (!frac) return;
-        // Students: flat salary (no compounding). Staff/postdoc: annual escalation.
+        // Resolve base monthly: check salaryHistory for a matching date range, fallback to baseMonthly
+        const history = Array.isArray(p.salaryHistory) ? p.salaryHistory : [];
+        const activeRate = history.find((h) => {
+          if (!h || !h.base) return false;
+          if (h.from && md < new Date(h.from + "T00:00:00Z")) return false;
+          if (h.to   && md > new Date(h.to   + "T00:00:00Z")) return false;
+          return true;
+        });
+        const baseThisMonth = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
+        // Students: flat. Staff/postdoc: annual escalation from forecast start.
         const isStudent = ["PhD Student","MSc Student"].includes(p.role);
         const sc = isStudent
-          ? (+p.baseMonthly || 0)
-          : (+p.baseMonthly || 0) * Math.pow(1 + (+D.settings.salaryInc || 0.035), Math.max(0, yrs(FC0, md)));
+          ? baseThisMonth
+          : baseThisMonth * Math.pow(1 + (+D.settings.salaryInc || 0.035), Math.max(0, yrs(FC0, md)));
         pers += sc * (p.benefits ? 1 + (+D.settings.benefitsRate || 0.22) : 1) * frac;
       });
       D.research.filter((r) => r && r.grantId === g.id).forEach((r) => {
@@ -171,19 +180,31 @@ function TT({ active: a, payload, label }) {
     </div>
   );
 }
-function SyncBar({ state, meta, onSync, onSave }) {
+function SyncBar({ state, meta, onSync, onSave, saveError }) {
   const dot = state==="saved"?"bg-green-400":state==="saving"?"bg-yellow-400 animate-pulse":state==="unsaved"?"bg-orange-400":"bg-red-400";
-  const msg = state==="saved"&&meta ? `Saved by ${meta.savedBy} at ${new Date(meta.savedAt).toLocaleTimeString()}` : state==="saving"?"Saving...":state==="unsaved"?"Unsaved changes":"Save failed";
+  const msg = state==="saved"&&meta
+    ? "Saved to cloud by " + meta.savedBy + " at " + new Date(meta.savedAt).toLocaleTimeString()
+    : state==="saving" ? "Saving to cloud..."
+    : state==="unsaved" ? "Unsaved changes — will auto-save in 2s"
+    : "SAVE FAILED — data is only in this browser";
   return (
-    <div className="bg-blue-950 text-blue-200 px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap">
-      <div className="flex items-center gap-3">
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
-        <span>{msg}</span>
+    <div>
+      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"bg-blue-950 text-blue-200")}>
+        <div className="flex items-center gap-3">
+          <span className={"w-2 h-2 rounded-full flex-shrink-0 " + dot} />
+          <span className="font-medium">{msg}</span>
+          {state==="error" && <span className="opacity-80">— Check Upstash env vars in Vercel Settings</span>}
+        </div>
+        <div className="flex gap-2">
+          <Btn onClick={onSync} v="secondary" sm>Refresh from cloud</Btn>
+          <Btn onClick={onSave} v="green" sm disabled={state==="saving"}>Save now</Btn>
+        </div>
       </div>
-      <div className="flex gap-2">
-        <Btn onClick={onSync} v="secondary" sm>Refresh</Btn>
-        <Btn onClick={onSave} v="green" sm disabled={state==="saving"}>Save now</Btn>
-      </div>
+      {state==="error" && saveError && (
+        <div className="bg-red-50 border-b border-red-200 px-5 py-2 text-xs text-red-700">
+          <strong>Error detail:</strong> {saveError} — Your data is safe in this browser tab but will be lost if you close it or someone else opens the app.
+        </div>
+      )}
     </div>
   );
 }
@@ -514,8 +535,25 @@ function People({ data, setData }) {
 
   function savePerson() {
     if (!form.name||!form.startDate||!form.baseMonthly) return alert("Name, start date and monthly base required.");
-    const total = (form.allocations||[]).reduce((s,a) => s+(+a.fraction||0), 0);
-    if (total > 1.005) return alert("Allocations sum to " + (total*100).toFixed(0) + "% — must not exceed 100%.");
+    // Validate: check no single month in the forecast exceeds 100% allocation
+    // (rows with different date ranges are fine to both be 100%)
+    const FC_START_DATE = new Date("2025-04-01T00:00:00Z");
+    let overlapError = null;
+    for (let mi = 0; mi < 36; mi++) {
+      const md = new Date(FC_START_DATE);
+      md.setUTCMonth(md.getUTCMonth() + mi);
+      const monthTotal = (form.allocations||[]).reduce((s, a) => {
+        if (!a.grantId) return s;
+        if (a.from && md < new Date(a.from + "T00:00:00Z")) return s;
+        if (a.to   && md > new Date(a.to   + "T00:00:00Z")) return s;
+        return s + (+a.fraction || 0);
+      }, 0);
+      if (monthTotal > 1.005) {
+        overlapError = md.toLocaleDateString("en-US", { year:"numeric", month:"short" }) + " sums to " + (monthTotal*100).toFixed(0) + "%";
+        break;
+      }
+    }
+    if (overlapError) return alert("Allocation overlap: " + overlapError + " — must not exceed 100% in any single month.");
     if (form.id) {
       setData(function(prev) { var s=safe(prev); s.people=s.people.map(function(p){return p.id===form.id?form:p;}); return s; });
     } else {
@@ -539,6 +577,19 @@ function People({ data, setData }) {
   function removeAlloc(i) {
     setForm((f) => ({...f, allocations: (f.allocations||[]).filter((_,j) => j!==i)}));
   }
+  function updSalaryHistory(i, k, v) {
+    setForm((f) => {
+      const sh = [...(f.salaryHistory||[])];
+      sh[i] = {...sh[i], [k]: v};
+      return {...f, salaryHistory: sh};
+    });
+  }
+  function addSalaryHistory() {
+    setForm((f) => ({...f, salaryHistory: [...(f.salaryHistory||[]), {base:"", from:"", to:""}]}));
+  }
+  function removeSalaryHistory(i) {
+    setForm((f) => ({...f, salaryHistory: (f.salaryHistory||[]).filter((_,j) => j!==i)}));
+  }
 
   return (
     <div className="space-y-4">
@@ -553,7 +604,7 @@ function People({ data, setData }) {
               <FL label="Role"><Sel value={form.role} onChange={(e) => setForm((f) => ({...f,role:e.target.value}))}>{ROLES.map((r) => <option key={r}>{r}</option>)}</Sel></FL>
               <FL label="Program / hire start *"><Inp type="date" value={form.startDate} onChange={(e) => setForm((f) => ({...f,startDate:e.target.value}))} /></FL>
               <FL label="Expected end / graduation"><Inp type="date" value={form.endDate||""} onChange={(e) => setForm((f) => ({...f,endDate:e.target.value}))} /></FL>
-              <FL label="Base monthly ($) *"><Inp type="number" value={form.baseMonthly} onChange={(e) => setForm((f) => ({...f,baseMonthly:e.target.value}))} /></FL>
+              <FL label="Current base monthly ($) *"><Inp type="number" value={form.baseMonthly} onChange={(e) => setForm((f) => ({...f,baseMonthly:e.target.value}))} /></FL>
               <FL label="Benefits (staff/postdoc)"><Sel value={form.benefits?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,benefits:e.target.value==="YES"}))}><option>YES</option><option>NO</option></Sel></FL>
               <FL label="Fellowship status"><Inp value={form.fellowship||""} onChange={(e) => setForm((f) => ({...f,fellowship:e.target.value}))} placeholder="None / Applying CGS-D" /></FL>
               <FL label="Notes"><Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
@@ -600,6 +651,28 @@ function People({ data, setData }) {
                 </div>
               ))}
               <Btn onClick={addAlloc} v="secondary" sm>+ Add grant slot</Btn>
+            </div>
+            <div className="mb-3 mt-2">
+              <div className="text-xs text-gray-500 mb-1">Salary / stipend history <span className="text-gray-400">(optional — only needed if base changed over time)</span></div>
+              <div className="text-xs text-gray-400 mb-2">Leave empty to use "Current base monthly" for the full forecast. Add rows when the salary changed at a specific date.</div>
+              {(form.salaryHistory||[]).map((h, i) => (
+                <div key={i} className="bg-gray-50 rounded-lg p-3 mb-2 border border-gray-200 flex gap-2 items-end flex-wrap">
+                  <div className="w-28">
+                    <div className="text-xs text-gray-400 mb-1">Base ($)</div>
+                    <Inp type="number" value={h.base||""} onChange={(e) => updSalaryHistory(i, "base", e.target.value)} placeholder="e.g. 3200"/>
+                  </div>
+                  <div className="flex-1 min-w-[130px]">
+                    <div className="text-xs text-gray-400 mb-1">From</div>
+                    <Inp type="date" value={h.from||""} onChange={(e) => updSalaryHistory(i, "from", e.target.value)}/>
+                  </div>
+                  <div className="flex-1 min-w-[130px]">
+                    <div className="text-xs text-gray-400 mb-1">To (blank = ongoing)</div>
+                    <Inp type="date" value={h.to||""} onChange={(e) => updSalaryHistory(i, "to", e.target.value)}/>
+                  </div>
+                  <button onClick={() => removeSalaryHistory(i)} className="text-red-400 hover:text-red-600 px-2 pb-1">x</button>
+                </div>
+              ))}
+              <Btn onClick={addSalaryHistory} v="secondary" sm>+ Add salary period</Btn>
             </div>
             <div className="flex gap-2"><Btn onClick={savePerson}>Save</Btn><Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn></div>
           </div>
@@ -867,6 +940,7 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [syncState, setSyncState] = useState("loading");
   const [syncMeta, setSyncMeta] = useState(null);
+  const [saveError, setSaveError] = useState(null);
   const [userName, setUserName] = useState("PI");
   const saveRef = useRef(null);
   const SECRET = process.env.NEXT_PUBLIC_LAB_SECRET || "yachie-lab-2025";
@@ -885,6 +959,7 @@ export default function Home() {
       }
     } catch(e) {
       console.error("Load failed:", e);
+      setSaveError("Load error: " + (e.message || "Unknown") + ". Check UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel Settings.");
       try {
         const local = localStorage.getItem("yachie-gms-local");
         if (local) setData(safe(JSON.parse(local)));
@@ -911,6 +986,7 @@ export default function Home() {
     } catch(e) {
       console.error("Save failed:", e);
       setSyncState("error");
+      setSaveError(e.message || "Unknown error");
     }
   }, [data, userName, SECRET]);
 
@@ -952,7 +1028,7 @@ export default function Home() {
             ))}
           </div>
         </div>
-        <SyncBar state={syncState} meta={syncMeta} onSync={loadFromServer} onSave={saveToServer} />
+        <SyncBar state={syncState} meta={syncMeta} onSync={loadFromServer} onSave={saveToServer} saveError={saveError} />
         <div className="p-4">
           {tab==="dashboard" && <Dashboard data={data} fc={fc} />}
           {tab==="grants"    && <Grants    data={data} setData={setData} />}
