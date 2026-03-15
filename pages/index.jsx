@@ -987,7 +987,7 @@ function Students({ data }) {
               </div>
               {rs && <span className={"px-2 py-1 rounded text-xs font-medium flex-shrink-0 "+rs.badge}>{rs.lbl}</span>}
             </div>
-            {rec && <div className={"mt-3 p-2 rounded text-xs font-medium "+rs.badge}>{rec.txt}</div>}
+
           </div>
         );
       })}
