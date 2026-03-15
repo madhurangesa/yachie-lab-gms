@@ -40,7 +40,7 @@ const RS = {
   ok:         { bg:"bg-blue-50",   border:"border-blue-200",   badge:"bg-blue-100 text-blue-800",     lbl:"On track" },
 };
 
-const ES = { salaryInc: 0.035, stipendInc: 0.03, benefitsRate: 0.22 };
+const ES = { postdocInc: 0.035, staffInc: 0.035, postdocBenefits: 0.22, staffBenefits: 0.22 };
 const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [] };
 
 function safe(d) {
@@ -87,12 +87,15 @@ function forecast(raw) {
           return true;
         });
         const baseThisMonth = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
-        // Students: flat. Staff/postdoc: annual escalation from forecast start.
-        const isStudent = ["PhD Student","MSc Student"].includes(p.role);
+        // Role-based escalation and benefits rates
+        const isStudent  = ["PhD Student","MSc Student"].includes(p.role);
+        const isPostdoc  = p.role === "Postdoc";
+        const incRate    = isPostdoc ? (+D.settings.postdocInc || 0.035) : (+D.settings.staffInc || 0.035);
+        const benRate    = isPostdoc ? (+D.settings.postdocBenefits || 0.22) : (+D.settings.staffBenefits || 0.22);
         const sc = isStudent
           ? baseThisMonth
-          : baseThisMonth * Math.pow(1 + (+D.settings.salaryInc || 0.035), Math.max(0, yrs(FC0, md)));
-        pers += sc * (p.benefits ? 1 + (+D.settings.benefitsRate || 0.22) : 1) * frac;
+          : baseThisMonth * Math.pow(1 + incRate, Math.max(0, yrs(FC0, md)));
+        pers += sc * (p.benefits ? 1 + benRate : 1) * frac;
       });
       D.research.filter((r) => r && r.grantId === g.id).forEach((r) => {
         res += (+r.monthlyBase || 0) * Math.pow(1 + (+r.escalation || 0), Math.max(0, yrs(g.startDate || FC0, md)));
@@ -910,9 +913,11 @@ function Settings({ data, setData, userName, setUserName }) {
       <Card>
         <SH title="Forecast assumptions" />
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = current salary or stipend. PhD & MSc students are treated as flat (no annual increase). Staff and postdocs escalate annually from April 2025 forward.</div>
-        <Row label="Salary annual increase — staff & postdoc" desc="Compounded from hire date" k="salaryInc" step="0.001" min="0" max="0.2" fmt={fp} />
+        <Row label="Postdoc — annual salary increase" desc="Compounded from April 2025 forward" k="postdocInc" step="0.001" min="0" max="0.2" fmt={fp} />
+        <Row label="Postdoc — benefits rate" desc="CPP, EI, health, vacation as % of postdoc salary" k="postdocBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
+        <Row label="Research Staff — annual salary increase" desc="Compounded from April 2025 forward" k="staffInc" step="0.001" min="0" max="0.2" fmt={fp} />
+        <Row label="Research Staff — benefits rate" desc="CPP, EI, health, vacation as % of staff salary" k="staffBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
 
-        <Row label="Benefits rate — staff & postdoc only" desc="CPP, EI, vacation, health as % of salary" k="benefitsRate" step="0.01" min="0" max="0.5" fmt={fp} />
       </Card>
       <Card>
         <SH title="Export & import data" />
