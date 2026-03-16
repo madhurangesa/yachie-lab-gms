@@ -806,7 +806,7 @@ function Grants({ data, setData }) {
         )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Code","Funder","Type","Dates","Award","IDC","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Code","Funder","Type","Dates","Starting balance","Total inflows","IDC","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
               {D.grants.map((g) => (
                 <tr key={g.id} className={"border-b border-gray-50 " + (!g.active?"opacity-50":"")}>
@@ -818,6 +818,17 @@ function Grants({ data, setData }) {
                   <td className="py-2 pr-3"><Badge c={g.type==="Capital"?"amber":"blue"}>{g.type}</Badge></td>
                   <td className="py-2 pr-3 text-xs text-gray-500">{g.startDate&&g.startDate.slice(0,7)} – {g.endDate&&g.endDate.slice(0,7)}</td>
                   <td className="py-2 pr-3 font-medium">{f$(g.totalAward)}</td>
+                  <td className="py-2 pr-3">
+                    {(() => {
+                      const total = D.inflows
+                        .filter((i) => i.grantId === g.id)
+                        .reduce((s, i) => s + (+i.amount || 0), 0);
+                      const count = D.inflows.filter((i) => i.grantId === g.id).length;
+                      return total > 0
+                        ? <span className="font-medium text-green-700">{f$(total)}<span className="text-xs text-gray-400 font-normal ml-1">({count} installment{count!==1?"s":""})</span></span>
+                        : <span className="text-gray-300 text-xs">none scheduled</span>;
+                    })()}
+                  </td>
                   <td className="py-2 pr-3 text-center">{g.idcExempt?<Badge c="gray">Exempt</Badge>:<Badge c="purple">{fp(g.idcRate)}</Badge>}</td>
                   <td className="py-2 pr-3 text-xs text-gray-400 max-w-[120px] truncate">{g.notes}</td>
                   <td className="py-2 whitespace-nowrap">
@@ -864,6 +875,16 @@ function Grants({ data, setData }) {
             })}
           </tbody>
         </table>
+        {D.inflows.length > 0 && (
+          <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+            <span className="text-xs text-gray-500">
+              {D.inflows.length} inflow{D.inflows.length!==1?"s":""} across {D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length} grant{D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length!==1?"s":""}
+            </span>
+            <span className="text-sm font-medium text-green-700">
+              Total scheduled: {f$(D.inflows.reduce((s,i)=>s+(+i.amount||0),0))}
+            </span>
+          </div>
+        )}
       </Card>
     </div>
   );
