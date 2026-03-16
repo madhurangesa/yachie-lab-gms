@@ -121,9 +121,11 @@ function forecast(raw) {
         if (id.getUTCFullYear() === my && id.getUTCMonth() === mm) inf += +i.amount || 0;
       });
       bal[g.id] = (bal[g.id] || 0) + inf - pers - res - idc;
-      row["b"+gi] = Math.round(bal[g.id]);
-      row["sp"+gi] = Math.round(pers + res + idc);
+      row["b"+gi]   = Math.round(bal[g.id]);
+      row["sp"+gi]  = Math.round(pers + res + idc);
       row["idc"+gi] = Math.round(idc);
+      row["p"+gi]   = Math.round(pers);
+      row["r"+gi]   = Math.round(res);
       row.tP += pers; row.tR += res; row.tIDC += idc; row.tI += inf;
     });
     row.tSpend = Math.round(row.tP + row.tR + row.tIDC);
@@ -132,6 +134,46 @@ function forecast(raw) {
     row.portBal = Math.round(ag.reduce((s, _, gi) => s + (row["b"+gi] || 0), 0));
     return row;
   });
+}
+
+// ── Compute cumulative spend by category for cap checking ────────────────────
+function computeGrantSpend(data, grantId, fc) {
+  const D = safe(data);
+  const g = D.grants.find((g) => g.id === grantId);
+  if (!g) return null;
+  const gi = D.grants.filter((g) => g.active).findIndex((g) => g.id === grantId);
+  if (gi < 0) return null;
+
+  // Personnel spend: sum from forecast rows
+  const totalPersonnel = fc.reduce((s, r) => {
+    // We need per-category spend — recalc from people
+    return s;
+  }, 0);
+
+  // Simpler: compute directly from raw data for the grant period
+  const fc0 = new Date(FC0 + "T00:00:00Z");
+  let personnel = 0, research = 0, travel = 0, idc = 0;
+
+  fc.forEach((row) => {
+    if (row["sp"+gi] === undefined) return;
+    // Approximate personnel vs research split using per-grant data
+    personnel += row["p"+gi] || 0;
+    research  += row["r"+gi] || 0;
+    idc       += row["idc"+gi] || 0;
+  });
+
+  // Research split: separate travel from other research
+  const travelItems = D.research.filter((r) => r.grantId === grantId && r.category.toLowerCase().includes("travel"));
+  const travelMonthly = travelItems.reduce((s, r) => s + (+r.monthlyBase || 0), 0);
+  const travelTotal = travelMonthly * fc.length;
+
+  return {
+    personnel: Math.round(personnel),
+    research:  Math.round(Math.max(0, research - travelTotal)),
+    travel:    Math.round(travelTotal),
+    idc:       Math.round(idc),
+    total:     Math.round(personnel + research + idc),
+  };
 }
 
 function recForStudent(p) {
@@ -205,6 +247,37 @@ function TT({ active: a, payload, label }) {
     </div>
   );
 }
+
+function PerGrantTooltip({ active: a, payload, label, fc, gi }) {
+  if (!a || !payload || !payload.length) return null;
+  // Find the matching fc row for this label
+  const row = fc.find((r) => r.label === label);
+  if (!row) return null;
+  const bal     = row["b"+gi];
+  const spend   = row["sp"+gi];
+  const pers    = row["p"+gi];
+  const res     = row["r"+gi];
+  const idc     = row["idc"+gi];
+  const inf     = row.tI > 0 ? row.tI : null; // approximate — full portfolio inflow
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 text-xs min-w-[180px]">
+      <div className="font-medium text-gray-700 mb-2 border-b border-gray-100 pb-1">{label}</div>
+      {bal !== undefined && (
+        <div className="flex justify-between gap-4 mb-1">
+          <span className="text-gray-500">Balance</span>
+          <span className={"font-medium " + (bal < 0 ? "text-red-600" : "text-gray-800")}>{f$(bal)}</span>
+        </div>
+      )}
+      <div className="border-t border-gray-100 mt-1 pt-1">
+        <div className="text-gray-400 mb-1 uppercase tracking-wide" style={{fontSize:10}}>This month spend</div>
+        {spend !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-500">Total spend</span><span className="font-medium text-gray-800">{f$(spend)}</span></div>}
+        {pers  !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ Personnel</span><span className="text-gray-600">{f$(pers)}</span></div>}
+        {res   !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ Research</span><span className="text-gray-600">{f$(res)}</span></div>}
+        {idc   !== undefined && idc > 0 && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ IDC</span><span className="text-gray-600">{f$(idc)}</span></div>}
+      </div>
+    </div>
+  );
+}
 function SyncBar({ state, meta, onSync, onSave, saveError }) {
   const dot = state==="saved"?"bg-green-400":state==="saving"?"bg-yellow-400 animate-pulse":state==="unsaved"?"bg-orange-400":"bg-red-400";
   const msg = state==="saved"&&meta
@@ -239,13 +312,34 @@ function GrantSummary({ g, gi, fc }) {
   if (!g || !fc.length) return null;
   const last = fc[fc.length - 1];
   const bal = last["b"+gi] || 0;
-  const avg = Math.round(fc.reduce((s, r) => s + (r["sp"+gi] || 0), 0) / fc.length);
+
+  // Only count months where this grant is active (has spend data)
+  const activeRows = fc.filter((r) => r["sp"+gi] > 0);
+  const avgSpend = activeRows.length
+    ? Math.round(activeRows.reduce((s, r) => s + (r["sp"+gi] || 0), 0) / activeRows.length)
+    : 0;
+
+  // Peak monthly spend
+  const peakSpend = Math.max(...fc.map((r) => r["sp"+gi] || 0));
+
+  // Months until balance hits zero
+  const zeroIdx = fc.findIndex((r) => (r["b"+gi] || 0) < 0);
+  const moToZero = zeroIdx === -1 ? ">" + fc.length + "mo" : zeroIdx + "mo";
+
+  const cards = [
+    ["Starting balance", f$(g.totalAward), false],
+    ["Avg monthly (active months)", f$(avgSpend), false],
+    ["Peak monthly", f$(peakSpend), false],
+    ["Balance at forecast end", f$(bal), bal < 0],
+    ["Months to zero", moToZero, zeroIdx > 0 && zeroIdx < 18],
+  ];
+
   return (
-    <div className="mt-3 grid grid-cols-3 gap-3">
-      {[["Starting balance", f$(g.totalAward)], ["Avg monthly", f$(avg)], ["Balance (36mo)", f$(bal)]].map(([lbl, val]) => (
-        <div key={lbl} className="bg-gray-50 rounded-lg p-3 text-center">
+    <div className="mt-3 grid gap-3" style={{gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))"}}>
+      {cards.map(([lbl, val, warn]) => (
+        <div key={lbl} className={"rounded-lg p-3 text-center " + (warn ? "bg-red-50" : "bg-gray-50")}>
           <div className="text-xs text-gray-400 mb-1">{lbl}</div>
-          <div className={"text-sm font-medium " + (lbl === "Balance (36mo)" && bal < 0 ? "text-red-600" : "text-gray-800")}>{val}</div>
+          <div className={"text-sm font-medium " + (warn ? "text-red-600" : "text-gray-800")}>{val}</div>
         </div>
       ))}
     </div>
@@ -306,7 +400,11 @@ function PerGrantChart({ ag, fc }) {
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis dataKey="label" tick={{ fontSize:10 }} interval={5} />
           <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
-          <Tooltip content={<TT />} />
+          <Tooltip content={
+            sel !== "all" && selIdx >= 0
+              ? <PerGrantTooltip fc={fc} gi={selIdx} />
+              : <TT />
+          } />
           <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
           {sel === "all" && <Legend iconType="line" iconSize={10} wrapperStyle={{ fontSize:11 }} />}
           {/* Grant end date vertical lines — staggered to avoid overlap */}
@@ -345,6 +443,115 @@ function PerGrantChart({ ag, fc }) {
         </LineChart>
       </ResponsiveContainer>
       {sel !== "all" && selIdx >= 0 && <GrantSummary g={ag[selIdx]} gi={selIdx} fc={fc} />}
+    </div>
+  );
+}
+
+// ── AI Reallocation Suggestions ───────────────────────────────────────────────
+function AIsuggestions({ data, fc }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const D = safe(data);
+
+  async function getSuggestions() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    const ag = D.grants.filter((g) => g && g.active);
+
+    // Build a concise summary for Claude
+    const grantSummary = ag.map((g, gi) => {
+      const lastBal = fc.length ? (fc[fc.length-1]["b"+gi] || 0) : 0;
+      const avgSpend = fc.length ? Math.round(fc.reduce((s,r) => s+(r["sp"+gi]||0),0)/fc.length) : 0;
+      const caps = g.caps || {};
+      const spend = computeGrantSpend(data, g.id, fc);
+      return {
+        code: g.code,
+        funder: g.funder,
+        endDate: g.endDate,
+        totalAward: g.totalAward,
+        forecastBalance: lastBal,
+        avgMonthlySpend: avgSpend,
+        caps: Object.keys(caps).length ? caps : "none set",
+        projectedSpend: spend,
+      };
+    });
+
+    const peopleSummary = D.people
+      .filter((p) => p.active !== false)
+      .map((p) => ({
+        name: p.name,
+        role: p.role,
+        baseMonthly: p.baseMonthly,
+        benefits: p.benefits,
+        startDate: p.startDate,
+        endDate: p.endDate || "open",
+        allocations: (p.allocations||[]).map((a) => {
+          const g = D.grants.find((g) => g.id === a.grantId);
+          return { grant: g ? g.code : "?", fraction: a.fraction, from: a.from||"start", to: a.to||"ongoing" };
+        }),
+      }));
+
+    const prompt = `You are a research grant management advisor for a synthetic biology laboratory. Analyze the following grant portfolio and personnel data, then provide specific, actionable reallocation recommendations to maximize how long the lab can operate before running out of funding.
+
+GRANT PORTFOLIO:
+${JSON.stringify(grantSummary, null, 2)}
+
+CURRENT PERSONNEL & ALLOCATIONS:
+${JSON.stringify(peopleSummary, null, 2)}
+
+Please provide:
+1. A brief assessment of the current situation (2-3 sentences max)
+2. Specific reallocation recommendations — name the person, the grant to move them to, the fraction, and the date to make the switch
+3. Any budget cap concerns
+4. Which grants are at risk of running over budget or expiring with money unspent
+
+Format your response clearly with numbered recommendations. Be specific with names, grant codes, fractions, and dates. Keep it concise — this is for a busy PI.`;
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const json = await res.json();
+      if (json.content && json.content[0]) {
+        setResult(json.content[0].text);
+      } else {
+        setError("No response received.");
+      }
+    } catch(e) {
+      setError("Request failed: " + e.message);
+    }
+    setLoading(false);
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-4 mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h2 className="text-base font-medium text-gray-700">AI reallocation suggestions</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Analyzes your grants, people and budget caps to suggest the best way to reallocate personnel</p>
+        </div>
+        <Btn onClick={getSuggestions} disabled={loading} v="primary">
+          {loading ? "Analysing..." : "Get suggestions"}
+        </Btn>
+      </div>
+      {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{error}</div>}
+      {result && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          {result}
+        </div>
+      )}
+      {!result && !error && !loading && (
+        <div className="text-xs text-gray-400 text-center py-4">Click "Get suggestions" to analyse your portfolio and get reallocation recommendations.</div>
+      )}
     </div>
   );
 }
@@ -485,7 +692,21 @@ function Dashboard({ data, fc }) {
                     <td className="py-2 pr-2 text-center">{g.idcExempt?<Badge c="gray">Exempt</Badge>:<Badge c="purple">{fp(g.idcRate)}</Badge>}</td>
                     <td className={"py-2 pr-2 text-right font-medium " + (bal!==null&&bal<0?"text-red-600":bal!==null&&bal<50000?"text-amber-600":"text-green-700")}>{bal!==null?f$(bal):"—"}</td>
                     <td className={"py-2 pr-2 text-center text-xs " + (mo!==null&&mo<=12?"text-red-600 font-medium":"text-gray-500")}>{mo!==null?mo+"mo":"—"}</td>
-                    <td className="py-2"><span className={"inline-block px-2 py-0.5 rounded text-xs font-medium " + sc[st]}>{st}</span></td>
+                    <td className="py-2">
+                      <span className={"inline-block px-2 py-0.5 rounded text-xs font-medium " + sc[st]}>{st}</span>
+                      {(() => {
+                        const caps = g.caps || {};
+                        const spend = computeGrantSpend(data, g.id, fc);
+                        if (!spend) return null;
+                        const warnings = [];
+                        if (caps.personnel && spend.personnel > +caps.personnel) warnings.push("Personnel over cap");
+                        if (caps.research  && spend.research  > +caps.research)  warnings.push("Research over cap");
+                        if (caps.travel    && spend.travel    > +caps.travel)     warnings.push("Travel over cap");
+                        if (caps.total     && spend.total     > +caps.total)      warnings.push("Total over cap");
+                        if (!warnings.length) return null;
+                        return <div className="mt-1">{warnings.map((w,i) => <span key={i} className="inline-block mr-1 px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs">{w}</span>)}</div>;
+                      })()}
+                    </td>
                   </tr>
                 );
               })}
@@ -493,6 +714,7 @@ function Dashboard({ data, fc }) {
           </table>
         </div>
       </Card>
+      <AIsuggestions data={data} fc={fc} />
     </div>
   );
 }
@@ -569,6 +791,15 @@ function Grants({ data, setData }) {
                 </label>
               </FL>
               <FL label="Notes"><Inp value={form.notes} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+              <div className="text-xs font-medium text-yellow-800 mb-2">Budget caps (optional) — leave blank for no limit</div>
+              <div className="grid gap-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))"}}>
+                <FL label="Max personnel ($)"><Inp type="number" value={(form.caps||{}).personnel||""} onChange={(e) => setForm((f) => ({...f,caps:{...(f.caps||{}),personnel:e.target.value}}))} placeholder="e.g. 300000"/></FL>
+                <FL label="Max research/consumables ($)"><Inp type="number" value={(form.caps||{}).research||""} onChange={(e) => setForm((f) => ({...f,caps:{...(f.caps||{}),research:e.target.value}}))} placeholder="e.g. 80000"/></FL>
+                <FL label="Max travel ($)"><Inp type="number" value={(form.caps||{}).travel||""} onChange={(e) => setForm((f) => ({...f,caps:{...(f.caps||{}),travel:e.target.value}}))} placeholder="e.g. 15000"/></FL>
+                <FL label="Max total direct ($)"><Inp type="number" value={(form.caps||{}).total||""} onChange={(e) => setForm((f) => ({...f,caps:{...(f.caps||{}),total:e.target.value}}))} placeholder="e.g. 450000"/></FL>
+              </div>
             </div>
             <div className="flex gap-2"><Btn onClick={saveGrant}>Save</Btn><Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn></div>
           </div>
