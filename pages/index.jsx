@@ -1911,7 +1911,7 @@ export default function Home() {
       <div className="min-h-screen bg-gray-50">
         <div className="bg-blue-900 text-white">
           <div className="px-5 pt-4">
-            <div className="font-medium text-base">Yachie Lab — Grant Management System</div>
+            <div className="font-medium text-base">Demo Lab — Grant Management System</div>
             <div className="text-blue-300 text-xs mt-1">{ag.length} active grant{ag.length!==1?"s":""} · {D.people.filter((p) => p.active).length} lab members · {f$(total)} total portfolio</div>
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
