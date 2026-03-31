@@ -50,13 +50,26 @@ const RS = {
   ok:         { bg:"bg-blue-50",   border:"border-blue-200",   badge:"bg-blue-100 text-blue-800",     lbl:"On track" },
 };
 
-const ES = { postdocInc: 0.035, staffInc: 0.035, postdocBenefits: 0.22, staffBenefits: 0.22 };
+const ES = {
+  postdocInc: 0.035, staffInc: 0.035,
+  postdocBenefits: 0.22, staffBenefits: 0.22,
+  domPhDTuition1: 850, domPhDTuition3: 600,
+  intlPhDTuition1: 1800, intlPhDTuition3: 1400,
+  domMScTuition: 750, intlMScTuition: 1600,
+  tuitionEsc: 0.03,
+  fellowships: [],
+};
 const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [] };
 
 function safe(d) {
   if (!d || typeof d !== "object") return { settings: { ...ES }, grants: [], inflows: [], people: [], research: [] };
+  const rawSettings = (d.settings && typeof d.settings === "object") ? d.settings : {};
   return {
-    settings: (d.settings && typeof d.settings === "object") ? d.settings : { ...ES },
+    settings: {
+      ...ES,
+      ...rawSettings,
+      fellowships: Array.isArray(rawSettings.fellowships) ? rawSettings.fellowships : [],
+    },
     grants:   Array.isArray(d.grants)   ? d.grants   : [],
     inflows:  Array.isArray(d.inflows)  ? d.inflows  : [],
     people:   Array.isArray(d.people)   ? d.people   : [],
@@ -97,7 +110,6 @@ function forecast(raw) {
           return true;
         });
         const baseThisMonth = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
-        // Role-based escalation and benefits rates
         const isStudent  = ["PhD Student","MSc Student"].includes(p.role);
         const isPostdoc  = p.role === "Postdoc";
         const incRate    = isPostdoc ? (+D.settings.postdocInc || 0.035) : (+D.settings.staffInc || 0.035);
@@ -105,7 +117,38 @@ function forecast(raw) {
         const sc = isStudent
           ? baseThisMonth
           : baseThisMonth * Math.pow(1 + incRate, Math.max(0, yrs(FC0, md)));
-        pers += sc * (p.benefits ? 1 + benRate : 1) * frac;
+
+        // ── Tuition ──────────────────────────────────────────────────────────
+        const isIntl = p.studentStatus === "International";
+        const phdYr  = Math.floor(yrs(p.startDate, md)) + 1;
+        const S = D.settings;
+        let tuition = 0;
+        if (p.role === "PhD Student") {
+          const tBase = phdYr <= 2
+            ? (isIntl ? (+S.intlPhDTuition1 || 0) : (+S.domPhDTuition1 || 0))
+            : (isIntl ? (+S.intlPhDTuition3 || 0) : (+S.domPhDTuition3 || 0));
+          tuition = tBase * Math.pow(1 + (+S.tuitionEsc || 0.03), Math.max(0, yrs(FC0, md)));
+        } else if (p.role === "MSc Student") {
+          const tBase = isIntl ? (+S.intlMScTuition || 0) : (+S.domMScTuition || 0);
+          tuition = tBase * Math.pow(1 + (+S.tuitionEsc || 0.03), Math.max(0, yrs(FC0, md)));
+        }
+
+        // ── Fellowship offset ─────────────────────────────────────────────────
+        const fels = Array.isArray(S.fellowships) ? S.fellowships : [];
+        const fel  = fels.find(function(f) { return f.id === p.fellowshipId; });
+        let felStipend = 0, felCoversTuition = false;
+        if (fel && p.fellowshipStart) {
+          const fStart = new Date(p.fellowshipStart + "T00:00:00Z");
+          const fEnd   = new Date(fStart);
+          fEnd.setUTCMonth(fEnd.getUTCMonth() + (+fel.maxMonths || 0));
+          if (md >= fStart && md < fEnd) {
+            felStipend = +fel.monthlyStipend || 0;
+            felCoversTuition = !!fel.coversTuition;
+          }
+        }
+        const grantStipend = Math.max(0, sc - felStipend);
+        if (felCoversTuition) tuition = 0;
+        pers += (grantStipend * (p.benefits ? 1 + benRate : 1) + tuition) * frac;
       });
       D.research.filter((r) => {
         if (!r || r.grantId !== g.id) return false;
@@ -894,7 +937,7 @@ function Grants({ data, setData }) {
 function People({ data, setData }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
-  const BP = { name:"",role:"PhD Student",startDate:"",endDate:"",baseMonthly:"",benefits:false,allocations:[{grantId:"",fraction:""}],fellowship:"",notes:"" };
+  const BP = { name:"",role:"PhD Student",startDate:"",endDate:"",baseMonthly:"",benefits:false,studentStatus:"Domestic",fellowshipId:"",fellowshipStart:"",allocations:[{grantId:"",fraction:""}],salaryHistory:[],fellowship:"",notes:"" };
 
   function savePerson() {
     if (!form.name||!form.startDate||!form.baseMonthly) return alert("Name, start date and monthly base required.");
@@ -976,7 +1019,25 @@ function People({ data, setData }) {
               <FL label="Expected end / graduation"><Inp type="date" value={form.endDate||""} onChange={(e) => setForm((f) => ({...f,endDate:e.target.value}))} /></FL>
               <FL label="Current base monthly ($) *"><Inp type="number" value={form.baseMonthly} onChange={(e) => setForm((f) => ({...f,baseMonthly:e.target.value}))} /></FL>
               <FL label="Benefits (staff/postdoc)"><Sel value={form.benefits?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,benefits:e.target.value==="YES"}))}><option>YES</option><option>NO</option></Sel></FL>
-              <FL label="Fellowship status"><Inp value={form.fellowship||""} onChange={(e) => setForm((f) => ({...f,fellowship:e.target.value}))} placeholder="None / Applying CGS-D" /></FL>
+              <FL label="Fellowship status (text note)"><Inp value={form.fellowship||""} onChange={(e) => setForm((f) => ({...f,fellowship:e.target.value}))} placeholder="None / Applying CGS-D" /></FL>
+              <FL label="Student status">
+                <Sel value={form.studentStatus||"N/A"} onChange={(e) => setForm((f) => ({...f,studentStatus:e.target.value}))}>
+                  <option>Domestic</option><option>International</option><option>N/A</option>
+                </Sel>
+              </FL>
+              <FL label="Active fellowship (from registry)">
+                <Sel value={form.fellowshipId||""} onChange={(e) => setForm((f) => ({...f,fellowshipId:e.target.value}))}>
+                  <option value="">None</option>
+                  {(D.settings.fellowships||[]).map((f) => (
+                    <option key={f.id} value={f.id}>{f.name} (${f.monthlyStipend}/mo{f.coversTuition?" + tuition":""})</option>
+                  ))}
+                </Sel>
+              </FL>
+              {form.fellowshipId && (
+                <FL label="Fellowship start date">
+                  <Inp type="date" value={form.fellowshipStart||""} onChange={(e) => setForm((f) => ({...f,fellowshipStart:e.target.value}))} />
+                </FL>
+              )}
               <FL label="Notes"><Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
             </div>
             <div className="mb-3">
@@ -1049,7 +1110,7 @@ function People({ data, setData }) {
         )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Name","Role","Yr","Start","Base/mo","Benefits","Allocations","Fellowship",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Name","Role","Status","Yr","Start","Base/mo","Allocations","Fellowship / Funding",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
               {D.people.map((p) => {
                 const y = yrs(p.startDate, new Date());
@@ -1066,10 +1127,14 @@ function People({ data, setData }) {
                     </td>
                     <td className="py-2 pr-3 font-medium">{p.name}</td>
                     <td className="py-2 pr-3"><Badge c={p.role==="Postdoc"?"blue":p.role==="Research Staff"?"gray":"green"}>{p.role}</Badge></td>
+                    <td className="py-2 pr-3">
+                      {(p.role==="PhD Student"||p.role==="MSc Student") && (
+                        <Badge c={p.studentStatus==="International"?"amber":"gray"}>{p.studentStatus||"Domestic"}</Badge>
+                      )}
+                    </td>
                     <td className={"py-2 pr-3 text-sm font-medium " + (late?"text-red-600":"text-gray-600")}>{yrStr}</td>
                     <td className="py-2 pr-3 text-xs text-gray-500">{p.startDate}</td>
                     <td className="py-2 pr-3 font-medium">{f$(p.baseMonthly)}</td>
-                    <td className="py-2 pr-3"><Badge c={p.benefits?"green":"gray"}>{p.benefits?"YES":"NO"}</Badge></td>
                     <td className="py-2 pr-3 text-xs">
                       {(p.allocations||[]).filter((a) => a.grantId).map((a, i) => {
                         const g = D.grants.find((g) => g.id === a.grantId);
@@ -1083,7 +1148,19 @@ function People({ data, setData }) {
                         );
                       })}
                     </td>
-                    <td className="py-2 pr-3 text-xs text-gray-500">{p.fellowship||"—"}</td>
+                    <td className="py-2 pr-3 text-xs">
+                      {(() => {
+                        const felReg = (D.settings.fellowships||[]).find((f) => f.id === p.fellowshipId);
+                        if (felReg) return (
+                          <span>
+                            <Badge c="purple">{felReg.name}</Badge>
+                            <span className="text-gray-400 ml-1">${felReg.monthlyStipend}/mo{felReg.coversTuition?" +tuition":""}</span>
+                            {p.fellowshipStart && <span className="text-gray-400 ml-1">from {p.fellowshipStart.slice(0,7)}</span>}
+                          </span>
+                        );
+                        return <span className="text-gray-400">{p.fellowship||"—"}</span>;
+                      })()}
+                    </td>
                     <td className="py-2 whitespace-nowrap">
                       <Btn onClick={() => setForm({...p})} v="ghost" sm>Edit</Btn>
                       <Btn onClick={() => deletePerson(p.id)} v="danger" sm>Del</Btn>
@@ -1340,6 +1417,69 @@ function Settings({ data, setData, userName, setUserName }) {
         <Row label="Research Staff — annual salary increase" desc="Compounded from April 2025 forward" k="staffInc" step="0.001" min="0" max="0.2" fmt={fp} />
         <Row label="Research Staff — benefits rate" desc="CPP, EI, health, vacation as % of staff salary" k="staffBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
 
+      </Card>
+      <Card>
+        <SH title="Tuition schedule" />
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-800">
+          Tuition is added on top of each student stipend and charged to their grant. Rates escalate annually. International students are flagged per person in the People tab.
+        </div>
+        <Row label="Domestic PhD — yr 1–2 / month" desc="Charged to grant on top of stipend" k="domPhDTuition1" step="50" min="0" max="5000" fmt={f$} />
+        <Row label="Domestic PhD — yr 3+ / month" desc="Usually lower after coursework ends" k="domPhDTuition3" step="50" min="0" max="5000" fmt={f$} />
+        <Row label="International PhD — yr 1–2 / month" desc="" k="intlPhDTuition1" step="50" min="0" max="8000" fmt={f$} />
+        <Row label="International PhD — yr 3+ / month" desc="" k="intlPhDTuition3" step="50" min="0" max="8000" fmt={f$} />
+        <Row label="Domestic MSc / month" desc="" k="domMScTuition" step="50" min="0" max="5000" fmt={f$} />
+        <Row label="International MSc / month" desc="" k="intlMScTuition" step="50" min="0" max="8000" fmt={f$} />
+        <Row label="Annual tuition escalation" desc="Applied from April 2025 forward" k="tuitionEsc" step="0.005" min="0" max="0.15" fmt={fp} />
+      </Card>
+      <Card>
+        <SH title="Fellowship registry" action={
+          <Btn onClick={function() {
+            var name = window.prompt("Fellowship name (e.g. NSERC CGS-D):");
+            if (!name) return;
+            var stipend = +window.prompt("Monthly stipend amount ($):", "2083");
+            if (isNaN(stipend)) return;
+            var maxMo = +window.prompt("Duration (months):", "36");
+            var coversTuition = window.confirm("Does this fellowship cover tuition?");
+            var tuitionAmt = coversTuition ? +window.prompt("Monthly tuition coverage ($, 0 = full waiver):", "0") : 0;
+            setData(function(prev) {
+              var sd = safe(prev);
+              var newFel = {
+                id: Math.random().toString(36).slice(2,9),
+                name: name, monthlyStipend: stipend, maxMonths: maxMo,
+                coversTuition: coversTuition, tuitionCoverage: tuitionAmt,
+              };
+              sd.settings = {...sd.settings, fellowships: [...(sd.settings.fellowships||[]), newFel]};
+              return sd;
+            });
+          }}>+ Add fellowship</Btn>
+        } />
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-3 text-xs text-purple-700">
+          Define fellowships once here — NSERC CGS-D, Vanier, CIHR doctoral, Banting, etc. Assign them to students in the People tab with a start date. The forecast deducts the fellowship stipend from what the grant pays — the grant covers only the top-up. If the fellowship covers tuition, that cost is also removed from the grant.
+        </div>
+        {(s.fellowships||[]).length === 0 && (
+          <div className="text-center py-5 text-xs text-gray-400">No fellowships defined. Click "+ Add fellowship" to add NSERC CGS-D, Vanier, CIHR doctoral, Banting, etc.</div>
+        )}
+        {(s.fellowships||[]).map((fel) => (
+          <div key={fel.id} className="flex items-center justify-between py-3 border-b border-gray-100 gap-4">
+            <div className="flex-1">
+              <div className="font-medium text-gray-700 text-sm">{fel.name}</div>
+              <div className="text-xs text-gray-400 mt-0.5">
+                ${fel.monthlyStipend}/mo · {fel.maxMonths} months · ${Math.round(fel.monthlyStipend * 12 / 1000)}k/yr
+                {fel.coversTuition
+                  ? <span className="ml-2 text-purple-600 font-medium">covers tuition{fel.tuitionCoverage > 0 ? " up to $" + fel.tuitionCoverage + "/mo" : " (full waiver)"}</span>
+                  : <span className="ml-2 text-gray-400">no tuition coverage</span>}
+              </div>
+            </div>
+            <Btn v="danger" sm onClick={function() {
+              if (!window.confirm("Remove " + fel.name + "?")) return;
+              setData(function(prev) {
+                var sd = safe(prev);
+                sd.settings = {...sd.settings, fellowships: sd.settings.fellowships.filter(function(f){return f.id!==fel.id;})};
+                return sd;
+              });
+            }}>Remove</Btn>
+          </div>
+        ))}
       </Card>
       <Card>
         <SH title="Export & import data" />
