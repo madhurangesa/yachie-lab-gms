@@ -53,27 +53,74 @@ const RS = {
 const ES = {
   postdocInc: 0.035, staffInc: 0.035,
   postdocBenefits: 0.22, staffBenefits: 0.22,
-  domPhDTuition1: 850, domPhDTuition3: 600,
-  intlPhDTuition1: 1800, intlPhDTuition3: 1400,
-  domMScTuition: 750, intlMScTuition: 1600,
-  tuitionEsc: 0.03,
-  fellowships: [],
+  // Tuition monthly rates (annual / 12)
+  domPhDYr12: 708, domPhDYr3plus: 708,
+  intlPhDYr12: 1833, intlPhDYr3plus: 1833,
+  domMScYr12: 708, domMScYr2plus: 708,
+  intlMScYr12: 1833, intlMScYr2plus: 1833,
+  tuitionEscalation: 0.03,
 };
-const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [] };
+const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [], fellowships: [] };
 
 function safe(d) {
-  if (!d || typeof d !== "object") return { settings: { ...ES }, grants: [], inflows: [], people: [], research: [] };
-  const rawSettings = (d.settings && typeof d.settings === "object") ? d.settings : {};
+  if (!d || typeof d !== "object") return { settings: { ...ES }, grants: [], inflows: [], people: [], research: [], fellowships: [] };
   return {
-    settings: {
-      ...ES,
-      ...rawSettings,
-      fellowships: Array.isArray(rawSettings.fellowships) ? rawSettings.fellowships : [],
-    },
-    grants:   Array.isArray(d.grants)   ? d.grants   : [],
-    inflows:  Array.isArray(d.inflows)  ? d.inflows  : [],
-    people:   Array.isArray(d.people)   ? d.people   : [],
-    research: Array.isArray(d.research) ? d.research : [],
+    settings:    (d.settings && typeof d.settings === "object") ? d.settings : { ...ES },
+    grants:      Array.isArray(d.grants)      ? d.grants      : [],
+    inflows:     Array.isArray(d.inflows)     ? d.inflows     : [],
+    people:      Array.isArray(d.people)      ? d.people      : [],
+    research:    Array.isArray(d.research)    ? d.research    : [],
+    fellowships: Array.isArray(d.fellowships) ? d.fellowships : [],
+  };
+}
+
+// ── Tuition lookup ───────────────────────────────────────────────────────────
+function getTuitionMonthly(p, md, settings) {
+  const isPhD = p.role === "PhD Student";
+  const isMSc = p.role === "MSc Student";
+  if (!isPhD && !isMSc) return 0;
+
+  const status = p.studentStatus || "Domestic";
+  if (status === "N/A") return 0;
+
+  const isIntl = status === "International";
+  const yearInProg = Math.floor(yrs(p.startDate || FC0, md)) + 1;
+
+  // Pick the right base rate
+  let baseRate = 0;
+  if (isPhD) {
+    baseRate = yearInProg <= 2
+      ? (isIntl ? (+settings.intlPhDYr12  || 0) : (+settings.domPhDYr12    || 0))
+      : (isIntl ? (+settings.intlPhDYr3plus || 0) : (+settings.domPhDYr3plus  || 0));
+  } else {
+    baseRate = yearInProg <= 1
+      ? (isIntl ? (+settings.intlMScYr12  || 0) : (+settings.domMScYr12    || 0))
+      : (isIntl ? (+settings.intlMScYr2plus || 0) : (+settings.domMScYr2plus  || 0));
+  }
+
+  // Apply annual tuition escalation from FC0
+  const esc = +settings.tuitionEscalation || 0;
+  return baseRate * Math.pow(1 + esc, Math.max(0, yrs(FC0, md)));
+}
+
+// ── Fellowship offset ─────────────────────────────────────────────────────────
+function getFellowshipOffset(p, md, fellowships) {
+  if (!p.fellowshipId || !p.fellowshipStart) return { stipend: 0, coversTuition: false, tuitionAmount: 0 };
+  const fel = (fellowships || []).find((f) => f.id === p.fellowshipId);
+  if (!fel) return { stipend: 0, coversTuition: false, tuitionAmount: 0 };
+
+  const start = new Date(p.fellowshipStart + "T00:00:00Z");
+  if (md < start) return { stipend: 0, coversTuition: false, tuitionAmount: 0 };
+
+  // Check duration
+  const maxMo = +fel.maxMonths || 999;
+  const moElapsed = Math.round((md - start) / (1000 * 60 * 60 * 24 * 30.4));
+  if (moElapsed >= maxMo) return { stipend: 0, coversTuition: false, tuitionAmount: 0 };
+
+  return {
+    stipend:       +fel.stipendMonthly || 0,
+    coversTuition: !!fel.coversTuition,
+    tuitionAmount: +fel.tuitionAmount || 0,
   };
 }
 
@@ -110,6 +157,7 @@ function forecast(raw) {
           return true;
         });
         const baseThisMonth = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
+        // Role-based escalation and benefits rates
         const isStudent  = ["PhD Student","MSc Student"].includes(p.role);
         const isPostdoc  = p.role === "Postdoc";
         const incRate    = isPostdoc ? (+D.settings.postdocInc || 0.035) : (+D.settings.staffInc || 0.035);
@@ -118,37 +166,16 @@ function forecast(raw) {
           ? baseThisMonth
           : baseThisMonth * Math.pow(1 + incRate, Math.max(0, yrs(FC0, md)));
 
-        // ── Tuition ──────────────────────────────────────────────────────────
-        const isIntl = p.studentStatus === "International";
-        const phdYr  = Math.floor(yrs(p.startDate, md)) + 1;
-        const S = D.settings;
-        let tuition = 0;
-        if (p.role === "PhD Student") {
-          const tBase = phdYr <= 2
-            ? (isIntl ? (+S.intlPhDTuition1 || 0) : (+S.domPhDTuition1 || 0))
-            : (isIntl ? (+S.intlPhDTuition3 || 0) : (+S.domPhDTuition3 || 0));
-          tuition = tBase * Math.pow(1 + (+S.tuitionEsc || 0.03), Math.max(0, yrs(FC0, md)));
-        } else if (p.role === "MSc Student") {
-          const tBase = isIntl ? (+S.intlMScTuition || 0) : (+S.domMScTuition || 0);
-          tuition = tBase * Math.pow(1 + (+S.tuitionEsc || 0.03), Math.max(0, yrs(FC0, md)));
-        }
-
-        // ── Fellowship offset ─────────────────────────────────────────────────
-        const fels = Array.isArray(S.fellowships) ? S.fellowships : [];
-        const fel  = fels.find(function(f) { return f.id === p.fellowshipId; });
-        let felStipend = 0, felCoversTuition = false;
-        if (fel && p.fellowshipStart) {
-          const fStart = new Date(p.fellowshipStart + "T00:00:00Z");
-          const fEnd   = new Date(fStart);
-          fEnd.setUTCMonth(fEnd.getUTCMonth() + (+fel.maxMonths || 0));
-          if (md >= fStart && md < fEnd) {
-            felStipend = +fel.monthlyStipend || 0;
-            felCoversTuition = !!fel.coversTuition;
-          }
-        }
-        const grantStipend = Math.max(0, sc - felStipend);
-        if (felCoversTuition) tuition = 0;
-        pers += (grantStipend * (p.benefits ? 1 + benRate : 1) + tuition) * frac;
+        // Tuition (students only) and fellowship offset
+        const tuition = getTuitionMonthly(p, md, D.settings);
+        const felOff  = getFellowshipOffset(p, md, D.fellowships || []);
+        // Grant pays: stipend minus fellowship stipend (floor 0) + tuition minus fellowship tuition coverage
+        const grantStipend  = Math.max(0, sc - felOff.stipend);
+        const grantTuition  = felOff.coversTuition ? Math.max(0, tuition - felOff.tuitionAmount) : tuition;
+        const grossCost     = isStudent
+          ? (grantStipend + grantTuition)
+          : sc * (p.benefits ? 1 + benRate : 1);
+        pers += grossCost * frac;
       });
       D.research.filter((r) => {
         if (!r || r.grantId !== g.id) return false;
@@ -600,8 +627,215 @@ Format your response clearly with numbered recommendations. Be specific with nam
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────────
+
+// ── Scenario Panel ────────────────────────────────────────────────────────────
+const SC_PERSON_BLANK = { id:"", name:"", role:"PhD Student", studentStatus:"Domestic", startDate:"", baseMonthly:"", grantId:"", fraction:"1", fellowshipId:"", notes:"" };
+
+function ScenarioPanel({ data, fc, scenarioPeople, setScenarioPeople, scenarioLabel, setScenarioLabel }) {
+  const D = safe(data);
+  const [form, setForm] = useState(null);
+
+  function saveScPerson() {
+    if (!form.role || !form.startDate || !form.baseMonthly) return alert("Role, start date and base monthly required.");
+    const entry = {...form, id: form.id || uid()};
+    if (form.id && scenarioPeople.find((p) => p.id === form.id)) {
+      setScenarioPeople(scenarioPeople.map((p) => p.id === form.id ? entry : p));
+    } else {
+      setScenarioPeople([...scenarioPeople, entry]);
+    }
+    setForm(null);
+  }
+
+  function removeScPerson(id) {
+    setScenarioPeople(scenarioPeople.filter((p) => p.id !== id));
+  }
+
+  // Merge scenario people into data for forecast
+  const scData = {
+    ...safe(data),
+    people: [
+      ...safe(data).people,
+      ...scenarioPeople.map((p) => ({
+        ...p,
+        active: true,
+        benefits: ["Postdoc","Research Staff"].includes(p.role),
+        salaryHistory: [],
+        allocations: p.grantId ? [{ grantId: p.grantId, fraction: +p.fraction || 1, from:"", to:"" }] : [],
+      })),
+    ],
+  };
+  const fcSc = forecast(scData);
+
+  // Build combined chart data for overlay
+  const chartData = fc.map((row, i) => ({
+    ...row,
+    scPortBal: fcSc[i] ? fcSc[i].portBal : null,
+    scSpend:   fcSc[i] ? fcSc[i].tSpend : null,
+  }));
+
+  // Diff metrics
+  const realEnd  = fc.length   ? fc[fc.length-1].portBal   : 0;
+  const scEnd    = fcSc.length ? fcSc[fcSc.length-1].portBal : 0;
+  const diff     = scEnd - realEnd;
+  const realBurn = fc.length   ? Math.round(fc.reduce((s,r)=>s+r.tSpend,0)/fc.length)   : 0;
+  const scBurn   = fcSc.length ? Math.round(fcSc.reduce((s,r)=>s+r.tSpend,0)/fcSc.length) : 0;
+
+  function handlePrint() {
+    window.print();
+  }
+
+  return (
+    <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-sm font-medium text-amber-900">Scenario mode — back of envelope</div>
+          <div className="text-xs text-amber-700 mt-0.5">Hypothetical people below are overlaid on real forecast. Nothing is saved.</div>
+        </div>
+        <div className="flex gap-2 items-center">
+          <input
+            type="text"
+            value={scenarioLabel}
+            onChange={(e) => setScenarioLabel(e.target.value)}
+            placeholder="Label this scenario..."
+            className="border border-amber-300 rounded-md px-3 py-1.5 text-xs bg-white w-48 focus:outline-none"
+          />
+          <button onClick={handlePrint}
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-amber-700 text-white hover:bg-amber-800 no-print">
+            Print
+          </button>
+          <button onClick={() => setScenarioPeople([])}
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-white border border-amber-300 text-amber-700 hover:bg-amber-100 no-print">
+            Clear all
+          </button>
+        </div>
+      </div>
+
+      {/* Comparison metrics */}
+      <div id="scenario-print-area">
+        {scenarioLabel && (
+          <div className="text-sm font-medium text-amber-900 mb-2 print-only" style={{display:"none"}}>{scenarioLabel} — {new Date().toLocaleDateString()}</div>
+        )}
+        <div className="grid grid-cols-2 gap-3 mb-3" style={{gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))"}}>
+          {[
+            ["Real burn/mo",     f$(realBurn),  false],
+            ["Scenario burn/mo", f$(scBurn),    scBurn > realBurn],
+            ["Real balance (36mo)",     f$(realEnd), realEnd < 0],
+            ["Scenario balance (36mo)", f$(scEnd),   scEnd < 0],
+            ["Impact",          (diff >= 0 ? "+" : "") + f$(Math.round(diff)), diff < 0],
+          ].map(([lbl, val, warn]) => (
+            <div key={lbl} className={"rounded-lg p-3 text-center " + (warn ? "bg-red-50 border border-red-200" : "bg-white border border-amber-200")}>
+              <div className="text-xs text-gray-400 mb-1">{lbl}</div>
+              <div className={"text-sm font-medium " + (warn ? "text-red-600" : "text-gray-800")}>{val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Overlay chart */}
+        <div className="bg-white rounded-lg border border-amber-200 p-3">
+          <div className="text-xs text-gray-500 mb-2">
+            <span className="inline-block w-8 border-t-2 border-blue-500 mr-1" style={{verticalAlign:"middle"}}></span>Real portfolio &nbsp;
+            <span className="inline-block w-8 border-t-2 border-dashed border-amber-500 mr-1" style={{verticalAlign:"middle"}}></span>Scenario
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={chartData} margin={{top:4,right:8,left:8,bottom:4}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis dataKey="label" tick={{fontSize:10}} interval={5} />
+              <YAxis tickFormatter={fk} tick={{fontSize:10}} width={52} />
+              <Tooltip content={<TT />} />
+              <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
+              <Legend iconType="line" iconSize={10} wrapperStyle={{fontSize:11}} />
+              <Line type="monotone" dataKey="portBal" name="Real" stroke="#185FA5" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="scPortBal" name="Scenario" stroke="#BA7517" strokeWidth={2} strokeDasharray="6 3" dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Add hypothetical people */}
+      <div className="no-print">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-medium text-amber-900">Hypothetical people ({scenarioPeople.length})</div>
+          <button onClick={() => setForm({...SC_PERSON_BLANK})}
+            className="px-3 py-1 rounded text-xs font-medium bg-amber-700 text-white hover:bg-amber-800">
+            + Add person
+          </button>
+        </div>
+
+        {form && (
+          <div className="bg-white border border-amber-300 rounded-lg p-3 mb-3">
+            <div className="text-xs font-medium text-amber-800 mb-2">{form.id ? "Edit" : "New hypothetical person"}</div>
+            <div className="grid gap-2 mb-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))"}}>
+              <div><label className="block text-xs text-gray-500 mb-1">Label (optional)</label>
+                <input className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none" value={form.name} onChange={(e)=>setForm((f)=>({...f,name:e.target.value}))} placeholder="e.g. New postdoc"/></div>
+              <div><label className="block text-xs text-gray-500 mb-1">Role</label>
+                <select className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none" value={form.role} onChange={(e)=>setForm((f)=>({...f,role:e.target.value}))}>
+                  {ROLES.map((r)=><option key={r}>{r}</option>)}
+                </select></div>
+              {["PhD Student","MSc Student"].includes(form.role) && (
+                <div><label className="block text-xs text-gray-500 mb-1">Status</label>
+                  <select className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none" value={form.studentStatus||"Domestic"} onChange={(e)=>setForm((f)=>({...f,studentStatus:e.target.value}))}>
+                    <option>Domestic</option><option>International</option>
+                  </select></div>
+              )}
+              <div><label className="block text-xs text-gray-500 mb-1">Start date *</label>
+                <input type="date" className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none" value={form.startDate} onChange={(e)=>setForm((f)=>({...f,startDate:e.target.value}))}/></div>
+              <div><label className="block text-xs text-gray-500 mb-1">Base monthly ($) *</label>
+                <input type="number" className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none" value={form.baseMonthly} onChange={(e)=>setForm((f)=>({...f,baseMonthly:e.target.value}))}/></div>
+              <div><label className="block text-xs text-gray-500 mb-1">Charge to grant</label>
+                <select className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none" value={form.grantId} onChange={(e)=>setForm((f)=>({...f,grantId:e.target.value}))}>
+                  <option value="">Select grant...</option>
+                  {D.grants.filter((g)=>g.active).map((g)=><option key={g.id} value={g.id}>{g.code}</option>)}
+                </select></div>
+              <div><label className="block text-xs text-gray-500 mb-1">Fraction</label>
+                <input type="number" min="0" max="1" step="0.1" className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none" value={form.fraction} onChange={(e)=>setForm((f)=>({...f,fraction:e.target.value}))}/></div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={saveScPerson} className="px-4 py-2 rounded-md text-sm font-medium bg-amber-700 text-white hover:bg-amber-800">Add to scenario</button>
+              <button onClick={()=>setForm(null)} className="px-4 py-2 rounded-md text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200">Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {scenarioPeople.length > 0 && (
+          <div className="space-y-2">
+            {scenarioPeople.map((p) => {
+              const g = D.grants.find((g)=>g.id===p.grantId);
+              const tui = getTuitionMonthly({...p, active:true}, new Date(), D.settings);
+              const cost = +p.baseMonthly + tui;
+              return (
+                <div key={p.id} className="bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+                  <div className="text-xs">
+                    <span className="font-medium text-gray-800">{p.name||p.role}</span>
+                    <span className="text-gray-500 ml-2">{p.role}</span>
+                    {["PhD Student","MSc Student"].includes(p.role) && <span className="text-amber-700 ml-1">({p.studentStatus||"Domestic"})</span>}
+                    <span className="text-gray-500 ml-2">from {p.startDate}</span>
+                    <span className="text-gray-500 ml-2">{f$(cost)}/mo{tui>0?" (incl. tuition)":""}</span>
+                    {g && <span className="text-blue-600 ml-2">→ {g.code} ({(+p.fraction*100).toFixed(0)}%)</span>}
+                  </div>
+                  <div className="flex gap-1">
+                    <button onClick={()=>setForm({...p})} className="text-xs text-blue-500 hover:text-blue-700 px-2">Edit</button>
+                    <button onClick={()=>removeScPerson(p.id)} className="text-xs text-red-400 hover:text-red-600 px-2">x</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {scenarioPeople.length === 0 && !form && (
+          <div className="text-center py-4 text-xs text-amber-600">No hypothetical people added yet. Click "+ Add person" to model hiring scenarios.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ data, fc }) {
   const [tab, setTab] = useState("portfolio");
+  const [scenarioOn, setScenarioOn] = useState(false);
+  const [scenarioPeople, setScenarioPeople] = useState([]);
+  const [scenarioLabel, setScenarioLabel] = useState("");
   const D = safe(data);
   const ag = D.grants.filter((g) => g && g.active);
   const totalAward = ag.reduce((s, g) => s + (+g.totalAward || 0), 0);
@@ -613,12 +847,23 @@ function Dashboard({ data, fc }) {
   const tabs = [["portfolio","Portfolio balance"],["pergrant","Per-grant"],["burn","Monthly burn"],["idc","IDC breakdown"],["cashflow","Cash flow"]];
   return (
     <div className="space-y-4">
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-start">
         <Metric label="Total portfolio" value={f$(totalAward)} sub={ag.length + " active grant" + (ag.length!==1?"s":"")} />
         <Metric label="Avg monthly burn" value={f$(avgBurn)} sub="personnel + research + IDC" />
         <Metric label="Avg monthly IDC" value={f$(avgIDC)} sub="overhead charged" />
         <Metric label="Balance at 36mo" value={f$(lastBal)} sub="end of forecast" warn={lastBal<0} />
         <Metric label="Months to zero" value={moZero} sub="combined portfolio" warn={biIdx>0&&biIdx<18} />
+        <div className="flex-shrink-0 pt-1">
+          <button
+            onClick={() => setScenarioOn((v) => !v)}
+            className={"px-4 py-2 rounded-lg text-sm font-medium border-2 transition-colors no-print " +
+              (scenarioOn
+                ? "bg-amber-600 text-white border-amber-600"
+                : "bg-white text-amber-700 border-amber-400 hover:bg-amber-50")}
+          >
+            {scenarioOn ? "Exit scenario mode" : "Scenario mode"}
+          </button>
+        </div>
       </div>
       <Card>
         <div className="flex gap-2 flex-wrap mb-4">
@@ -757,6 +1002,16 @@ function Dashboard({ data, fc }) {
           </table>
         </div>
       </Card>
+      {scenarioOn && (
+        <ScenarioPanel
+          data={data}
+          fc={fc}
+          scenarioPeople={scenarioPeople}
+          setScenarioPeople={setScenarioPeople}
+          scenarioLabel={scenarioLabel}
+          setScenarioLabel={setScenarioLabel}
+        />
+      )}
       <AIsuggestions data={data} fc={fc} />
     </div>
   );
@@ -937,7 +1192,7 @@ function Grants({ data, setData }) {
 function People({ data, setData }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
-  const BP = { name:"",role:"PhD Student",startDate:"",endDate:"",baseMonthly:"",benefits:false,studentStatus:"Domestic",fellowshipId:"",fellowshipStart:"",allocations:[{grantId:"",fraction:""}],salaryHistory:[],fellowship:"",notes:"" };
+  const BP = { name:"",role:"PhD Student",studentStatus:"Domestic",startDate:"",endDate:"",baseMonthly:"",benefits:false,allocations:[{grantId:"",fraction:""}],fellowship:"",fellowshipId:"",fellowshipStart:"",notes:"" };
 
   function savePerson() {
     if (!form.name||!form.startDate||!form.baseMonthly) return alert("Name, start date and monthly base required.");
@@ -1019,25 +1274,29 @@ function People({ data, setData }) {
               <FL label="Expected end / graduation"><Inp type="date" value={form.endDate||""} onChange={(e) => setForm((f) => ({...f,endDate:e.target.value}))} /></FL>
               <FL label="Current base monthly ($) *"><Inp type="number" value={form.baseMonthly} onChange={(e) => setForm((f) => ({...f,baseMonthly:e.target.value}))} /></FL>
               <FL label="Benefits (staff/postdoc)"><Sel value={form.benefits?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,benefits:e.target.value==="YES"}))}><option>YES</option><option>NO</option></Sel></FL>
-              <FL label="Fellowship status (text note)"><Inp value={form.fellowship||""} onChange={(e) => setForm((f) => ({...f,fellowship:e.target.value}))} placeholder="None / Applying CGS-D" /></FL>
-              <FL label="Student status">
-                <Sel value={form.studentStatus||"N/A"} onChange={(e) => setForm((f) => ({...f,studentStatus:e.target.value}))}>
-                  <option>Domestic</option><option>International</option><option>N/A</option>
-                </Sel>
-              </FL>
-              <FL label="Active fellowship (from registry)">
-                <Sel value={form.fellowshipId||""} onChange={(e) => setForm((f) => ({...f,fellowshipId:e.target.value}))}>
-                  <option value="">None</option>
-                  {(D.settings.fellowships||[]).map((f) => (
-                    <option key={f.id} value={f.id}>{f.name} (${f.monthlyStipend}/mo{f.coversTuition?" + tuition":""})</option>
-                  ))}
-                </Sel>
-              </FL>
-              {form.fellowshipId && (
+              {["PhD Student","MSc Student"].includes(form.role) && (
+                <FL label="Student status">
+                  <Sel value={form.studentStatus||"Domestic"} onChange={(e) => setForm((f) => ({...f,studentStatus:e.target.value}))}>
+                    <option>Domestic</option>
+                    <option>International</option>
+                    <option>N/A</option>
+                  </Sel>
+                </FL>
+              )}
+              {["PhD Student","MSc Student"].includes(form.role) && (
+                <FL label="Active fellowship (from registry)">
+                  <Sel value={form.fellowshipId||""} onChange={(e) => setForm((f) => ({...f,fellowshipId:e.target.value}))}>
+                    <option value="">None</option>
+                    {(D.fellowships||[]).map((f) => <option key={f.id} value={f.id}>{f.name} (${(+f.stipendMonthly||0).toLocaleString()}/mo{f.coversTuition?" + tuition":""})</option>)}
+                  </Sel>
+                </FL>
+              )}
+              {["PhD Student","MSc Student"].includes(form.role) && form.fellowshipId && (
                 <FL label="Fellowship start date">
                   <Inp type="date" value={form.fellowshipStart||""} onChange={(e) => setForm((f) => ({...f,fellowshipStart:e.target.value}))} />
                 </FL>
               )}
+              <FL label="Fellowship notes / status"><Inp value={form.fellowship||""} onChange={(e) => setForm((f) => ({...f,fellowship:e.target.value}))} placeholder="None / Applying CGS-D / Held Vanier" /></FL>
               <FL label="Notes"><Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} /></FL>
             </div>
             <div className="mb-3">
@@ -1110,7 +1369,7 @@ function People({ data, setData }) {
         )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Name","Role","Status","Yr","Start","Base/mo","Allocations","Fellowship / Funding",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">{["Active","Name","Role","Status","Yr","Start","Base/mo","Grant charge/mo","Allocations","Fellowship",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
               {D.people.map((p) => {
                 const y = yrs(p.startDate, new Date());
@@ -1127,14 +1386,30 @@ function People({ data, setData }) {
                     </td>
                     <td className="py-2 pr-3 font-medium">{p.name}</td>
                     <td className="py-2 pr-3"><Badge c={p.role==="Postdoc"?"blue":p.role==="Research Staff"?"gray":"green"}>{p.role}</Badge></td>
-                    <td className="py-2 pr-3">
-                      {(p.role==="PhD Student"||p.role==="MSc Student") && (
-                        <Badge c={p.studentStatus==="International"?"amber":"gray"}>{p.studentStatus||"Domestic"}</Badge>
-                      )}
-                    </td>
                     <td className={"py-2 pr-3 text-sm font-medium " + (late?"text-red-600":"text-gray-600")}>{yrStr}</td>
                     <td className="py-2 pr-3 text-xs text-gray-500">{p.startDate}</td>
                     <td className="py-2 pr-3 font-medium">{f$(p.baseMonthly)}</td>
+                    <td className="py-2 pr-3">
+                      {["PhD Student","MSc Student"].includes(p.role)
+                        ? <Badge c={p.studentStatus==="International"?"amber":"blue"}>{p.studentStatus||"Domestic"}</Badge>
+                        : <Badge c="gray">N/A</Badge>}
+                    </td>
+                    <td className="py-2 pr-3 font-medium text-xs">
+                      {["PhD Student","MSc Student"].includes(p.role) ? (() => {
+                        const now = new Date();
+                        const tui = getTuitionMonthly(p, now, D.settings);
+                        const felOff = getFellowshipOffset(p, now, D.fellowships||[]);
+                        const grantPays = Math.max(0, +p.baseMonthly - felOff.stipend) + (felOff.coversTuition ? Math.max(0, tui - felOff.tuitionAmount) : tui);
+                        const total = +p.baseMonthly + tui;
+                        return (
+                          <div>
+                            <div className="text-gray-800">{f$(Math.round(grantPays))}/mo</div>
+                            {tui > 0 && <div className="text-gray-400">incl. {f$(Math.round(tui))} tuition</div>}
+                            {felOff.stipend > 0 && <div className="text-green-600">–{f$(felOff.stipend)} fellowship</div>}
+                          </div>
+                        );
+                      })() : <span className="text-gray-400">—</span>}
+                    </td>
                     <td className="py-2 pr-3 text-xs">
                       {(p.allocations||[]).filter((a) => a.grantId).map((a, i) => {
                         const g = D.grants.find((g) => g.id === a.grantId);
@@ -1148,19 +1423,7 @@ function People({ data, setData }) {
                         );
                       })}
                     </td>
-                    <td className="py-2 pr-3 text-xs">
-                      {(() => {
-                        const felReg = (D.settings.fellowships||[]).find((f) => f.id === p.fellowshipId);
-                        if (felReg) return (
-                          <span>
-                            <Badge c="purple">{felReg.name}</Badge>
-                            <span className="text-gray-400 ml-1">${felReg.monthlyStipend}/mo{felReg.coversTuition?" +tuition":""}</span>
-                            {p.fellowshipStart && <span className="text-gray-400 ml-1">from {p.fellowshipStart.slice(0,7)}</span>}
-                          </span>
-                        );
-                        return <span className="text-gray-400">{p.fellowship||"—"}</span>;
-                      })()}
-                    </td>
+                    <td className="py-2 pr-3 text-xs text-gray-500">{p.fellowship||"—"}</td>
                     <td className="py-2 whitespace-nowrap">
                       <Btn onClick={() => setForm({...p})} v="ghost" sm>Edit</Btn>
                       <Btn onClick={() => deletePerson(p.id)} v="danger" sm>Del</Btn>
@@ -1348,6 +1611,101 @@ function Students({ data }) {
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
+// ── Fellowship Registry ───────────────────────────────────────────────────────
+function FellowshipRegistry({ data, setData }) {
+  const D = safe(data);
+  const [form, setForm] = useState(null);
+  const BF = { name:"", stipendMonthly:"", coversTuition:false, tuitionAmount:"", maxMonths:"24", notes:"" };
+
+  function saveFellowship() {
+    if (!form.name || !form.stipendMonthly) return alert("Name and monthly stipend required.");
+    if (form.id) {
+      setData(function(prev) { var s=safe(prev); s.fellowships=s.fellowships.map(function(f){return f.id===form.id?form:f;}); return s; });
+    } else {
+      setData(function(prev) { var s=safe(prev); s.fellowships=[...s.fellowships,{...form,id:uid()}]; return s; });
+    }
+    setForm(null);
+  }
+  function deleteFellowship(id) {
+    if (!window.confirm("Delete this fellowship type?")) return;
+    setData(function(prev) { var s=safe(prev); s.fellowships=s.fellowships.filter(function(f){return f.id!==id;}); return s; });
+  }
+
+  return (
+    <Card>
+      <SH title="Fellowship registry"
+        action={<Btn onClick={() => setForm({...BF})} sm>+ Add fellowship</Btn>} />
+      <p className="text-xs text-gray-400 mb-3">
+        Define each fellowship type once here. Then assign fellowships to students in the People tab.
+        The forecast deducts the fellowship stipend from what the grant pays, and optionally removes tuition charges too.
+      </p>
+      {form && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+          <div className="font-medium text-purple-800 mb-3 text-sm">{form.id?"Edit fellowship":"New fellowship type"}</div>
+          <div className="grid gap-3 mb-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(185px,1fr))"}}>
+            <FL label="Fellowship name *">
+              <Inp value={form.name} onChange={(e) => setForm((f) => ({...f,name:e.target.value}))} placeholder="e.g. NSERC CGS-D" />
+            </FL>
+            <FL label="Monthly stipend ($) *">
+              <Inp type="number" value={form.stipendMonthly} onChange={(e) => setForm((f) => ({...f,stipendMonthly:e.target.value}))} placeholder="e.g. 2083" />
+            </FL>
+            <FL label="Duration (months)">
+              <Inp type="number" value={form.maxMonths} onChange={(e) => setForm((f) => ({...f,maxMonths:e.target.value}))} placeholder="e.g. 24" />
+            </FL>
+            <FL label="Covers tuition?">
+              <Sel value={form.coversTuition?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,coversTuition:e.target.value==="YES"}))}>
+                <option>NO</option>
+                <option>YES</option>
+              </Sel>
+            </FL>
+            {form.coversTuition && (
+              <FL label="Tuition coverage ($/mo, 0 = full)">
+                <Inp type="number" value={form.tuitionAmount} onChange={(e) => setForm((f) => ({...f,tuitionAmount:e.target.value}))} placeholder="0 = covers all" />
+              </FL>
+            )}
+            <FL label="Notes">
+              <Inp value={form.notes||""} onChange={(e) => setForm((f) => ({...f,notes:e.target.value}))} placeholder="e.g. CIHR doctoral, 2 years" />
+            </FL>
+          </div>
+          <div className="flex gap-2">
+            <Btn onClick={saveFellowship}>Save</Btn>
+            <Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn>
+          </div>
+        </div>
+      )}
+      {D.fellowships.length === 0 && !form && (
+        <div className="text-center py-6 text-gray-400 text-sm">No fellowships defined yet. Add common ones like NSERC CGS-D, Vanier, CIHR, Banting.</div>
+      )}
+      {D.fellowships.length > 0 && (
+        <table className="w-full text-sm">
+          <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100">
+            {["Name","Stipend/mo","Duration","Tuition coverage","Notes",""].map((h) => <th key={h} className="py-2 pr-3 text-left font-medium">{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {D.fellowships.map((f) => (
+              <tr key={f.id} className="border-b border-gray-50">
+                <td className="py-2 pr-3 font-medium text-purple-700">{f.name}</td>
+                <td className="py-2 pr-3 font-medium text-green-700">{f$(+f.stipendMonthly||0)}</td>
+                <td className="py-2 pr-3 text-gray-600">{f.maxMonths||"—"} mo</td>
+                <td className="py-2 pr-3">
+                  {f.coversTuition
+                    ? <Badge c="green">{+f.tuitionAmount > 0 ? f$(+f.tuitionAmount)+"/mo" : "Full coverage"}</Badge>
+                    : <Badge c="gray">Not covered</Badge>}
+                </td>
+                <td className="py-2 pr-3 text-xs text-gray-400">{f.notes}</td>
+                <td className="py-2 whitespace-nowrap">
+                  <Btn onClick={() => setForm({...f})} v="ghost" sm>Edit</Btn>
+                  <Btn onClick={() => deleteFellowship(f.id)} v="danger" sm>Del</Btn>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
 function Settings({ data, setData, userName, setUserName }) {
   const D = safe(data);
   const s = D.settings;
@@ -1411,75 +1769,12 @@ function Settings({ data, setData, userName, setUserName }) {
       </Card>
       <Card>
         <SH title="Forecast assumptions" />
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = current salary or stipend. PhD & MSc students are treated as flat (no annual increase). Staff and postdocs escalate annually from April 2025 forward.</div>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = stipend only (no tuition). Tuition is calculated separately below based on student status and year. PhD & MSc students have flat stipends. Staff and postdocs escalate annually.</div>
         <Row label="Postdoc — annual salary increase" desc="Compounded from April 2025 forward" k="postdocInc" step="0.001" min="0" max="0.2" fmt={fp} />
         <Row label="Postdoc — benefits rate" desc="CPP, EI, health, vacation as % of postdoc salary" k="postdocBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
         <Row label="Research Staff — annual salary increase" desc="Compounded from April 2025 forward" k="staffInc" step="0.001" min="0" max="0.2" fmt={fp} />
         <Row label="Research Staff — benefits rate" desc="CPP, EI, health, vacation as % of staff salary" k="staffBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
 
-      </Card>
-      <Card>
-        <SH title="Tuition schedule" />
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-800">
-          Tuition is added on top of each student stipend and charged to their grant. Rates escalate annually. International students are flagged per person in the People tab.
-        </div>
-        <Row label="Domestic PhD — yr 1–2 / month" desc="Charged to grant on top of stipend" k="domPhDTuition1" step="50" min="0" max="5000" fmt={f$} />
-        <Row label="Domestic PhD — yr 3+ / month" desc="Usually lower after coursework ends" k="domPhDTuition3" step="50" min="0" max="5000" fmt={f$} />
-        <Row label="International PhD — yr 1–2 / month" desc="" k="intlPhDTuition1" step="50" min="0" max="8000" fmt={f$} />
-        <Row label="International PhD — yr 3+ / month" desc="" k="intlPhDTuition3" step="50" min="0" max="8000" fmt={f$} />
-        <Row label="Domestic MSc / month" desc="" k="domMScTuition" step="50" min="0" max="5000" fmt={f$} />
-        <Row label="International MSc / month" desc="" k="intlMScTuition" step="50" min="0" max="8000" fmt={f$} />
-        <Row label="Annual tuition escalation" desc="Applied from April 2025 forward" k="tuitionEsc" step="0.005" min="0" max="0.15" fmt={fp} />
-      </Card>
-      <Card>
-        <SH title="Fellowship registry" action={
-          <Btn onClick={function() {
-            var name = window.prompt("Fellowship name (e.g. NSERC CGS-D):");
-            if (!name) return;
-            var stipend = +window.prompt("Monthly stipend amount ($):", "2083");
-            if (isNaN(stipend)) return;
-            var maxMo = +window.prompt("Duration (months):", "36");
-            var coversTuition = window.confirm("Does this fellowship cover tuition?");
-            var tuitionAmt = coversTuition ? +window.prompt("Monthly tuition coverage ($, 0 = full waiver):", "0") : 0;
-            setData(function(prev) {
-              var sd = safe(prev);
-              var newFel = {
-                id: Math.random().toString(36).slice(2,9),
-                name: name, monthlyStipend: stipend, maxMonths: maxMo,
-                coversTuition: coversTuition, tuitionCoverage: tuitionAmt,
-              };
-              sd.settings = {...sd.settings, fellowships: [...(sd.settings.fellowships||[]), newFel]};
-              return sd;
-            });
-          }}>+ Add fellowship</Btn>
-        } />
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-3 text-xs text-purple-700">
-          Define fellowships once here — NSERC CGS-D, Vanier, CIHR doctoral, Banting, etc. Assign them to students in the People tab with a start date. The forecast deducts the fellowship stipend from what the grant pays — the grant covers only the top-up. If the fellowship covers tuition, that cost is also removed from the grant.
-        </div>
-        {(s.fellowships||[]).length === 0 && (
-          <div className="text-center py-5 text-xs text-gray-400">No fellowships defined. Click "+ Add fellowship" to add NSERC CGS-D, Vanier, CIHR doctoral, Banting, etc.</div>
-        )}
-        {(s.fellowships||[]).map((fel) => (
-          <div key={fel.id} className="flex items-center justify-between py-3 border-b border-gray-100 gap-4">
-            <div className="flex-1">
-              <div className="font-medium text-gray-700 text-sm">{fel.name}</div>
-              <div className="text-xs text-gray-400 mt-0.5">
-                ${fel.monthlyStipend}/mo · {fel.maxMonths} months · ${Math.round(fel.monthlyStipend * 12 / 1000)}k/yr
-                {fel.coversTuition
-                  ? <span className="ml-2 text-purple-600 font-medium">covers tuition{fel.tuitionCoverage > 0 ? " up to $" + fel.tuitionCoverage + "/mo" : " (full waiver)"}</span>
-                  : <span className="ml-2 text-gray-400">no tuition coverage</span>}
-              </div>
-            </div>
-            <Btn v="danger" sm onClick={function() {
-              if (!window.confirm("Remove " + fel.name + "?")) return;
-              setData(function(prev) {
-                var sd = safe(prev);
-                sd.settings = {...sd.settings, fellowships: sd.settings.fellowships.filter(function(f){return f.id!==fel.id;})};
-                return sd;
-              });
-            }}>Remove</Btn>
-          </div>
-        ))}
       </Card>
       <Card>
         <SH title="Export & import data" />
@@ -1492,6 +1787,25 @@ function Settings({ data, setData, userName, setUserName }) {
           </div>
         </div>
       </Card>
+      <Card>
+        <SH title="Tuition rates (monthly — annual divided by 12)"
+          action={<span className="text-xs text-gray-400">Applied to PhD & MSc students based on status and year</span>} />
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3 text-xs text-blue-800">
+          Set the monthly tuition amount for each category. International rates are typically 2-3x domestic. Year 3+ rates for PhD are often lower at some universities (e.g. tuition waiver programs). Annual escalation applies to all rates.
+        </div>
+        <div className="grid gap-0 mb-2">
+          <Row label="PhD — Domestic, Year 1-2" desc="Monthly tuition charged to grant" k="domPhDYr12" step="10" min="0" max="5000" fmt={f$} />
+          <Row label="PhD — Domestic, Year 3+" desc="Monthly tuition charged to grant" k="domPhDYr3plus" step="10" min="0" max="5000" fmt={f$} />
+          <Row label="PhD — International, Year 1-2" desc="Monthly tuition charged to grant" k="intlPhDYr12" step="10" min="0" max="8000" fmt={f$} />
+          <Row label="PhD — International, Year 3+" desc="Monthly tuition charged to grant" k="intlPhDYr3plus" step="10" min="0" max="8000" fmt={f$} />
+          <Row label="MSc — Domestic, Year 1" desc="Monthly tuition charged to grant" k="domMScYr12" step="10" min="0" max="5000" fmt={f$} />
+          <Row label="MSc — Domestic, Year 2+" desc="Monthly tuition charged to grant" k="domMScYr2plus" step="10" min="0" max="5000" fmt={f$} />
+          <Row label="MSc — International, Year 1" desc="Monthly tuition charged to grant" k="intlMScYr12" step="10" min="0" max="8000" fmt={f$} />
+          <Row label="MSc — International, Year 2+" desc="Monthly tuition charged to grant" k="intlMScYr2plus" step="10" min="0" max="8000" fmt={f$} />
+          <Row label="Annual tuition escalation" desc="Applied to all tuition rates year over year" k="tuitionEscalation" step="0.005" min="0" max="0.15" fmt={fp} />
+        </div>
+      </Card>
+      <FellowshipRegistry data={data} setData={setData} />
       <Card className="border-red-200">
         <SH title="Reset" />
         <Btn onClick={() => { if (window.confirm("Clear ALL data?")) setData({...BLANK}); }} v="danger">Clear everything</Btn>
@@ -1582,7 +1896,18 @@ export default function Home() {
 
   return (
     <>
-      <Head><title>Yachie Lab — Grant Management</title><meta name="viewport" content="width=device-width, initial-scale=1" /></Head>
+      <Head>
+        <title>Yachie Lab — Grant Management</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <style>{`
+          @media print {
+            body * { visibility: hidden; }
+            #scenario-print-area, #scenario-print-area * { visibility: visible; }
+            #scenario-print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 20px; }
+            .no-print { display: none !important; }
+          }
+        `}</style>
+      </Head>
       <div className="min-h-screen bg-gray-50">
         <div className="bg-blue-900 text-white">
           <div className="px-5 pt-4">
