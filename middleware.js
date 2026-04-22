@@ -3,8 +3,16 @@ import { NextResponse } from "next/server";
 export function middleware(req) {
   const { pathname } = req.nextUrl;
 
-  // Always allow the login page and login API through
-  if (pathname === "/login" || pathname === "/api/login") {
+  // Always allow these through
+  if (
+    pathname === "/login" ||
+    pathname === "/api/login" ||
+    pathname.startsWith("/api/data") ||
+    pathname.startsWith("/_next") ||
+    pathname === "/favicon.ico" ||
+    pathname === "/manifest.json" ||
+    pathname.startsWith("/icon-")
+  ) {
     return NextResponse.next();
   }
 
