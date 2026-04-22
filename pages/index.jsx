@@ -27,7 +27,7 @@ try { LAB_CONFIG = require("../config.js"); } catch(e) {}
 const LAB_NAME       = LAB_CONFIG.labName       || "Yachie Lab";
 const LAB_SUBTITLE   = LAB_CONFIG.labSubtitle   || "Grant Management System";
 const PAGE_TITLE     = LAB_CONFIG.pageTitle      || "Lab GMS";
-const HEADER_COLOR   = LAB_CONFIG.headerColor    || "#1e3a5f";
+const HEADER_COLOR   = LAB_CONFIG.headerColor    || "#7C6FAE";
 const FC0_CONFIG     = LAB_CONFIG.forecastStart  || "2025-04-01";
 const CATS_CONFIG    = LAB_CONFIG.categories     || null;
 const ROLES_CONFIG   = LAB_CONFIG.roles          || null;
@@ -577,7 +577,7 @@ function SyncBar({ state, meta, onSync, onSave, saveError }) {
     : "SAVE FAILED — data is only in this browser";
   return (
     <div>
-      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"bg-blue-950 text-blue-200")}>
+      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"")} style={state!=="error" ? {background:"rgba(0,0,0,0.25)", backdropFilter:"blur(4px)", color:"rgba(255,255,255,0.75)"} : {}}>
         <div className="flex items-center gap-3">
           <span className={"w-2 h-2 rounded-full flex-shrink-0 " + dot} />
           <span className="font-medium">{msg}</span>
@@ -2447,7 +2447,7 @@ export default function Home() {
         <title>{PAGE_TITLE}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#1e3a5f" />
+        <meta name="theme-color" content="#7C6FAE" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Demo Lab GMS" />
@@ -2494,4 +2494,3 @@ export default function Home() {
     </>
   );
 }
-
