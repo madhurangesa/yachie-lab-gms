@@ -1,10 +1,36 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+/**
+ * Lab Grant Management System — Core Application
+ * ════════════════════════════════════════════════
+ * Original system developed by Madhumitha Rangesa
+ * Yachie Lab · UBC School of Biomedical Engineering · Vancouver, Canada
+ * github.com/madhurangesa/lab-gms · 2025
+ *
+ * Licensed under CC BY-NC 4.0 — free for academic research use.
+ * Not for commercial use. Attribution must be preserved.
+ *
+ * To customise this app for your lab, edit config.js.
+ * Do not modify this file unless you are adding new features.
+ * ════════════════════════════════════════════════
+ */
+
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Head from "next/head";
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine,
 } from "recharts";
+
+// ── Lab configuration (edit config.js, not this file) ───────────────────────
+let LAB_CONFIG = {};
+try { LAB_CONFIG = require("../config.js"); } catch(e) {}
+const LAB_NAME       = LAB_CONFIG.labName       || "Yachie Lab";
+const LAB_SUBTITLE   = LAB_CONFIG.labSubtitle   || "Grant Management System";
+const PAGE_TITLE     = LAB_CONFIG.pageTitle      || "Lab GMS";
+const HEADER_COLOR   = LAB_CONFIG.headerColor    || "#1e3a5f";
+const FC0_CONFIG     = LAB_CONFIG.forecastStart  || "2025-04-01";
+const CATS_CONFIG    = LAB_CONFIG.categories     || null;
+const ROLES_CONFIG   = LAB_CONFIG.roles          || null;
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const f$ = (n) => { if (n == null || isNaN(n)) return "$0"; return (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString(); };
@@ -20,20 +46,27 @@ function addMo(base, n) {
 function yrs(s, t) { if (!s) return 0; return Math.max(0, (t - new Date(s + "T00:00:00Z")) / 31557600000); }
 function active(p, d) {
   // Note: we do NOT check p.active here — the active toggle is UI-only (hides from Students tab).
-  // The end date is what controls when forecasting stops. This way marking someone inactive
-  // keeps their historical charges in the forecast up to their end date.
+  // The end date is what controls when forecasting stops. payRunFrac handles partial months.
   if (!p || !p.startDate) return false;
-  if (d < new Date(p.startDate + "T00:00:00Z")) return false;
-  if (p.endDate && d > new Date(p.endDate + "T00:00:00Z")) return false;
+  // Check if person has ANY active days in this month
+  const year = d.getUTCFullYear(), month = d.getUTCMonth();
+  const monthEnd = new Date(Date.UTC(year, month + 1, 0));
+  const personStart = new Date(p.startDate + "T00:00:00Z");
+  if (personStart > monthEnd) return false; // starts after this month ends
+  if (p.endDate) {
+    const monthStart = new Date(Date.UTC(year, month, 1));
+    const personEnd = new Date(p.endDate + "T00:00:00Z");
+    if (personEnd < monthStart) return false; // ended before this month started
+  }
   return true;
 }
 function moLbl(d) { return d.toLocaleDateString("en-US", { year: "2-digit", month: "short", timeZone: "UTC" }); }
 function moLeft(s) { if (!s) return null; return Math.ceil((new Date(s) - new Date()) / (1000 * 60 * 60 * 24 * 30.4)); }
 
-const FC0 = "2025-04-01";
-const FCN = 36;
+const FC0 = FC0_CONFIG;
+const FCN_DEFAULT = 36;
 const GC = ["#185FA5","#0F6E56","#854F0B","#3B6D11","#534AB7","#993C1D","#5F5E5A","#712B13"];
-const ROLES = ["PhD Student","MSc Student","Postdoc","Research Staff","Undergraduate","Prospective Student"];
+const ROLES = ROLES_CONFIG || ["PhD Student","MSc Student","Postdoc","Research Associate","Research Staff","Undergraduate","Prospective Student"];
 function countMonths(from, to) {
   if (!from || !to) return null;
   const [fy, fm] = from.split("-").map(Number);
@@ -41,18 +74,55 @@ function countMonths(from, to) {
   return Math.max(0, (ty - fy) * 12 + (tm - fm) + 1);
 }
 
-const CATS = ["Sequencing-NGS","Sequencing-LongRead","Sequencing-Sanger","Animals-PerDiem","Animals-Procedures","Animals-Genotyping","Consumables-MolBio","Consumables-CellCulture","DNA-Synthesis","Computing-Cloud","Services-Core","Services-Maintenance","Travel","General"];
+const CATS = CATS_CONFIG || ["Sequencing-NGS","Sequencing-LongRead","Sequencing-Sanger","Animals-PerDiem","Animals-Procedures","Animals-Genotyping","Consumables-MolBio","Consumables-CellCulture","DNA-Synthesis","Computing-Cloud","Services-Core","Services-Maintenance","Travel","General"];
 const RS = {
-  critical:   { bg:"bg-red-50",    border:"border-red-300",    badge:"bg-red-100 text-red-800",       lbl:"Critical" },
-  high:       { bg:"bg-orange-50", border:"border-orange-300", badge:"bg-orange-100 text-orange-800", lbl:"Urgent" },
-  medium:     { bg:"bg-amber-50",  border:"border-amber-200",  badge:"bg-amber-100 text-amber-800",   lbl:"Review" },
-  fellowship: { bg:"bg-green-50",  border:"border-green-300",  badge:"bg-green-100 text-green-800",   lbl:"Fellowship" },
-  ok:         { bg:"bg-blue-50",   border:"border-blue-200",   badge:"bg-blue-100 text-blue-800",     lbl:"On track" },
+  critical:     { bg:"bg-red-50",    border:"border-red-300",    badge:"bg-red-100 text-red-800",       lbl:"Critical" },
+  high:         { bg:"bg-orange-50", border:"border-orange-300", badge:"bg-orange-100 text-orange-800", lbl:"Urgent" },
+  medium:       { bg:"bg-amber-50",  border:"border-amber-200",  badge:"bg-amber-100 text-amber-800",   lbl:"Review" },
+  fellowship:   { bg:"bg-green-50",  border:"border-green-300",  badge:"bg-green-100 text-green-800",   lbl:"Fellowship" },
+  ok:           { bg:"bg-blue-50",   border:"border-blue-200",   badge:"bg-blue-100 text-blue-800",     lbl:"On track" },
+  unallocated:  { bg:"bg-yellow-50", border:"border-yellow-400", badge:"bg-yellow-100 text-yellow-800", lbl:"Unallocated" },
 };
+
+// Returns the date (as string) from which a person has no allocation, or null if fully covered
+function firstUnallocatedDate(p) {
+  if (!p || !p.startDate) return null;
+  const allocs = (p.allocations || []).filter((a) => a.grantId);
+  if (!allocs.length) return p.startDate;
+
+  // Find the latest allocation end date
+  let latestEnd = null;
+  let hasOpenEnded = false;
+  allocs.forEach((a) => {
+    if (!a.to) { hasOpenEnded = true; return; }
+    const d = new Date(a.to + "T00:00:00Z");
+    if (!latestEnd || d > latestEnd) latestEnd = d;
+  });
+
+  if (hasOpenEnded) return null; // at least one allocation goes to infinity
+
+  if (!latestEnd) return p.startDate;
+
+  // If person has an end date and allocations cover up to it, no gap
+  if (p.endDate) {
+    const personEnd = new Date(p.endDate + "T00:00:00Z");
+    if (latestEnd >= personEnd) return null;
+  }
+
+  // Gap starts the day after the last allocation ends
+  const gapStart = new Date(latestEnd);
+  gapStart.setUTCDate(gapStart.getUTCDate() + 1);
+  const today = new Date();
+  // Only warn if gap is in the future
+  if (gapStart < today) {
+    // Gap already started — still warn
+  }
+  return gapStart.toISOString().slice(0, 10);
+}
 
 const ES = {
   postdocInc: 0.035, staffInc: 0.035,
-  postdocBenefits: 0.22, staffBenefits: 0.22,
+  // benefits rates now per-person, not global
   // Tuition monthly rates (annual / 12)
   domPhDYr12: 708, domPhDYr3plus: 708,
   intlPhDYr12: 1833, intlPhDYr3plus: 1833,
@@ -124,13 +194,63 @@ function getFellowshipOffset(p, md, fellowships) {
   };
 }
 
-function forecast(raw) {
+// ── UBC Payroll helper ────────────────────────────────────────────────────────
+// UBC pays twice a month: the 15th and the last day of the month.
+// Each pay run = 0.5 of monthly salary.
+// For each run we check: is this person active on that date AND on this grant?
+// First month: if person starts after the 15th, they only get the month-end run (0.5).
+//              if they start on or before the 15th, they get both runs (1.0).
+//              if they start after the last day, they get nothing (0).
+// Last month: same logic in reverse for end date.
+// Mid-career grant switch: whichever grant they're on ON the pay date gets that run.
+
+function payRunFrac(alloc, person, md, grantId, allAllocs) {
+  const year  = md.getUTCFullYear();
+  const month = md.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const payDates = [
+    new Date(Date.UTC(year, month, 15)),
+    new Date(Date.UTC(year, month, lastDay)),
+  ];
+
+  let totalFrac = 0;
+
+  payDates.forEach((payDate) => {
+    // Check person is active on this pay date
+    if (person.startDate) {
+      const ps = new Date(person.startDate + "T00:00:00Z");
+      // First month proration: if start is after the 15th, skip the 15th pay run
+      if (ps > payDate) return;
+    }
+    if (person.endDate) {
+      const pe = new Date(person.endDate + "T00:00:00Z");
+      if (pe < payDate) return;
+    }
+
+    // Find which allocation is active on this specific pay date
+    const activeAlloc = (allAllocs || []).find((a) => {
+      if (!a || a.grantId !== grantId) return false;
+      if (a.from && payDate < new Date(a.from + "T00:00:00Z")) return false;
+      if (a.to   && payDate > new Date(a.to   + "T00:00:00Z")) return false;
+      return true;
+    });
+
+    if (activeAlloc) {
+      totalFrac += 0.5 * (+activeAlloc.fraction || 0);
+    }
+  });
+
+  return totalFrac;
+}
+
+function forecast(raw, fcMonths) {
   const D = safe(raw);
   const ag = D.grants.filter((g) => g && g.active);
   if (!ag.length) return [];
   const bal = {};
   ag.forEach((g) => { bal[g.id] = +g.totalAward || 0; });
-  return Array.from({ length: FCN }, (_, mi) => {
+  const N = fcMonths || FCN_DEFAULT;
+  return Array.from({ length: N }, (_, mi) => {
     const md = addMo(FC0, mi);
     const [my, mm] = [md.getUTCFullYear(), md.getUTCMonth()];
     const row = { label: moLbl(md), tP: 0, tR: 0, tIDC: 0, tI: 0 };
@@ -139,15 +259,17 @@ function forecast(raw) {
       D.people.forEach((p) => {
         if (!active(p, md)) return;
         const allocs = Array.isArray(p.allocations) ? p.allocations : [];
-        // Find allocation active in this month (check from/to date range)
+        // Use UBC payroll logic: check allocation on the 15th and last day of month
+        const payFrac = payRunFrac(null, p, md, g.id, allocs);
+        if (!payFrac) return;
+        // Keep alloc reference for salary history resolution
         const alloc = allocs.find((a) => {
           if (!a || a.grantId !== g.id) return false;
           if (a.from && md < new Date(a.from + "T00:00:00Z")) return false;
           if (a.to   && md > new Date(a.to   + "T00:00:00Z")) return false;
           return true;
         });
-        const frac = +(alloc || {}).fraction || 0;
-        if (!frac) return;
+        const frac = 1; // payFrac already incorporates the allocation fraction
         // Resolve base monthly: check salaryHistory for a matching date range, fallback to baseMonthly
         const history = Array.isArray(p.salaryHistory) ? p.salaryHistory : [];
         const activeRate = history.find((h) => {
@@ -160,11 +282,10 @@ function forecast(raw) {
         // Role-based escalation and benefits rates
         const isStudent  = ["PhD Student","MSc Student"].includes(p.role);
         const isPostdoc  = p.role === "Postdoc";
-        const incRate    = isPostdoc ? (+D.settings.postdocInc || 0.035) : (+D.settings.staffInc || 0.035);
-        const benRate    = isPostdoc ? (+D.settings.postdocBenefits || 0.22) : (+D.settings.staffBenefits || 0.22);
-        const sc = isStudent
-          ? baseThisMonth
-          : baseThisMonth * Math.pow(1 + incRate, Math.max(0, yrs(FC0, md)));
+        // Benefits rate: use period-specific rate if set, otherwise fall back to person rate
+        const benRate    = (activeRate && activeRate.benefitsRate) ? +activeRate.benefitsRate : (+p.benefitsRate || 0.21);
+        // No automatic annual escalation — use salary history to record raises manually
+        const sc = baseThisMonth;
 
         // Tuition (students only) and fellowship offset
         const tuition = getTuitionMonthly(p, md, D.settings);
@@ -175,7 +296,7 @@ function forecast(raw) {
         const grossCost     = isStudent
           ? (grantStipend + grantTuition)
           : sc * (p.benefits ? 1 + benRate : 1);
-        pers += grossCost * frac;
+        pers += grossCost * payFrac;
       });
       D.research.filter((r) => {
         if (!r || r.grantId !== g.id) return false;
@@ -183,7 +304,7 @@ function forecast(raw) {
         if (r.to   && md > new Date(r.to   + "-01T00:00:00Z")) return false;
         return true;
       }).forEach((r) => {
-        res += (+r.monthlyBase || 0) * Math.pow(1 + (+r.escalation || 0), Math.max(0, yrs(g.startDate || FC0, md)));
+        res += (+r.monthlyBase || 0) * Math.pow(1 + (+r.escalation || 0), Math.floor(Math.max(0, yrs(g.startDate || FC0, md))));
       });
       const idc = (pers + (g.type === "Capital" ? 0 : res)) * (g.idcExempt ? 0 : (+g.idcRate || 0));
       D.inflows.filter((i) => i && i.grantId === g.id && i.date).forEach((i) => {
@@ -318,32 +439,131 @@ function TT({ active: a, payload, label }) {
   );
 }
 
-function PerGrantTooltip({ active: a, payload, label, fc, gi }) {
+function PerGrantTooltip({ active: a, payload, label, fc, gi, data, grantId }) {
   if (!a || !payload || !payload.length) return null;
-  // Find the matching fc row for this label
   const row = fc.find((r) => r.label === label);
   if (!row) return null;
-  const bal     = row["b"+gi];
-  const spend   = row["sp"+gi];
-  const pers    = row["p"+gi];
-  const res     = row["r"+gi];
-  const idc     = row["idc"+gi];
-  const inf     = row.tI > 0 ? row.tI : null; // approximate — full portfolio inflow
+  const bal   = row["b"+gi];
+  const spend = row["sp"+gi];
+  const pers  = row["p"+gi];
+  const res   = row["r"+gi];
+  const idc   = row["idc"+gi];
+
+  // Build per-person breakdown for this month
+  const D = safe(data);
+  const g = D.grants.find((g) => g.id === grantId);
+
+  // Find the forecast month date from FC0
+  const fc0 = new Date(FC0 + "T00:00:00Z");
+  const rowIdx = fc.findIndex((r) => r.label === label);
+  const md = addMo(FC0, rowIdx);
+
+  const personBreakdown = D.people
+    .filter((p) => {
+      if (!active(p, md)) return false;
+      const allocs = Array.isArray(p.allocations) ? p.allocations : [];
+      const alloc = allocs.find((al) => {
+        if (!al || al.grantId !== grantId) return false;
+        if (al.from && md < new Date(al.from + "T00:00:00Z")) return false;
+        if (al.to   && md > new Date(al.to   + "T00:00:00Z")) return false;
+        return true;
+      });
+      return !!alloc;
+    })
+    .map((p) => {
+      const allocs = Array.isArray(p.allocations) ? p.allocations : [];
+      const alloc = allocs.find((al) => {
+        if (!al || al.grantId !== grantId) return false;
+        if (al.from && md < new Date(al.from + "T00:00:00Z")) return false;
+        if (al.to   && md > new Date(al.to   + "T00:00:00Z")) return false;
+        return true;
+      });
+      const frac = +(alloc || {}).fraction || 0;
+
+      // Resolve base
+      const history = Array.isArray(p.salaryHistory) ? p.salaryHistory : [];
+      const activeRate = history.find((h) => {
+        if (!h || !h.base) return false;
+        if (h.from && md < new Date(h.from + "T00:00:00Z")) return false;
+        if (h.to   && md > new Date(h.to   + "T00:00:00Z")) return false;
+        return true;
+      });
+      const baseThisMonth = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
+
+      const isStudent = ["PhD Student","MSc Student"].includes(p.role);
+      const isPostdoc = p.role === "Postdoc";
+      const benRate   = (activeRate && activeRate.benefitsRate) ? +activeRate.benefitsRate : (+p.benefitsRate || 0.21);
+      const sc        = baseThisMonth;
+
+      const tuition  = getTuitionMonthly(p, md, D.settings);
+      const felOff   = getFellowshipOffset(p, md, D.fellowships || []);
+      const grantStipend = Math.max(0, sc - felOff.stipend);
+      const grantTuition = felOff.coversTuition ? Math.max(0, tuition - felOff.tuitionAmount) : tuition;
+      const grossCost    = isStudent
+        ? (grantStipend + grantTuition)
+        : sc * (p.benefits ? 1 + benRate : 1);
+      const costThisGrant = Math.round(grossCost * frac);
+
+      // Build breakdown label
+      const parts = [];
+      if (!isStudent && p.benefits) parts.push("incl. " + fp(benRate) + " benefits");
+      if (tuition > 0 && grantTuition > 0) parts.push("incl. " + f$(Math.round(grantTuition)) + " tuition");
+      if (felOff.stipend > 0) parts.push("–" + f$(felOff.stipend) + " fellowship");
+
+      return { name: p.name || p.role, cost: costThisGrant, parts, frac };
+    })
+    .filter((p) => p.cost > 0)
+    .sort((a, b) => b.cost - a.cost);
+
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 text-xs min-w-[180px]">
+    <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3 text-xs" style={{minWidth:220, maxWidth:300}}>
       <div className="font-medium text-gray-700 mb-2 border-b border-gray-100 pb-1">{label}</div>
       {bal !== undefined && (
-        <div className="flex justify-between gap-4 mb-1">
+        <div className="flex justify-between gap-4 mb-2">
           <span className="text-gray-500">Balance</span>
           <span className={"font-medium " + (bal < 0 ? "text-red-600" : "text-gray-800")}>{f$(bal)}</span>
         </div>
       )}
-      <div className="border-t border-gray-100 mt-1 pt-1">
+      <div className="border-t border-gray-100 pt-1">
         <div className="text-gray-400 mb-1 uppercase tracking-wide" style={{fontSize:10}}>This month spend</div>
-        {spend !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-500">Total spend</span><span className="font-medium text-gray-800">{f$(spend)}</span></div>}
-        {pers  !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ Personnel</span><span className="text-gray-600">{f$(pers)}</span></div>}
-        {res   !== undefined && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ Research</span><span className="text-gray-600">{f$(res)}</span></div>}
-        {idc   !== undefined && idc > 0 && <div className="flex justify-between gap-4 mb-0.5"><span className="text-gray-400">↳ IDC</span><span className="text-gray-600">{f$(idc)}</span></div>}
+        {spend !== undefined && (
+          <div className="flex justify-between gap-4 mb-1">
+            <span className="text-gray-600 font-medium">Total</span>
+            <span className="font-medium text-gray-800">{f$(spend)}</span>
+          </div>
+        )}
+        {pers !== undefined && (
+          <div className="mb-1">
+            <div className="flex justify-between gap-4 mb-0.5">
+              <span className="text-gray-500">↳ Personnel</span>
+              <span className="text-gray-700 font-medium">{f$(pers)}</span>
+            </div>
+            {personBreakdown.map((p, i) => (
+              <div key={i} className="flex justify-between gap-2 pl-3 mb-0.5">
+                <div>
+                  <span className="text-gray-400">{p.name}</span>
+                  {p.frac < 1 && <span className="text-gray-300 ml-1">({(p.frac*100).toFixed(0)}%)</span>}
+                  {p.parts.length > 0 && (
+                    <div className="text-gray-300" style={{fontSize:9}}>{p.parts.join(" · ")}</div>
+                  )}
+                </div>
+                <span className="text-gray-500 flex-shrink-0">{f$(p.cost)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {res !== undefined && (
+          <div className="flex justify-between gap-4 mb-0.5">
+            <span className="text-gray-400">↳ Research</span>
+            <span className="text-gray-600">{f$(res)}</span>
+          </div>
+        )}
+        {idc !== undefined && idc > 0 && (
+          <div className="flex justify-between gap-4 mb-0.5">
+            <span className="text-gray-400">↳ IDC</span>
+            <span className="text-gray-600">{f$(idc)}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -401,7 +621,7 @@ function GrantSummary({ g, gi, fc }) {
     ["Avg monthly (active months)", f$(avgSpend), false],
     ["Peak monthly", f$(peakSpend), false],
     ["Balance at forecast end", f$(bal), bal < 0],
-    ["Months to zero", moToZero, zeroIdx > 0 && zeroIdx < 18],
+
   ];
 
   return (
@@ -416,7 +636,7 @@ function GrantSummary({ g, gi, fc }) {
   );
 }
 
-function PerGrantChart({ ag, fc }) {
+function PerGrantChart({ ag, fc, data }) {
   const [sel, setSel] = useState("all");
   const selIdx = sel === "all" ? -1 : ag.findIndex((g) => g.id === sel);
 
@@ -472,7 +692,7 @@ function PerGrantChart({ ag, fc }) {
           <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
           <Tooltip content={
             sel !== "all" && selIdx >= 0
-              ? <PerGrantTooltip fc={fc} gi={selIdx} />
+              ? <PerGrantTooltip fc={fc} gi={selIdx} data={data} grantId={ag[selIdx] ? ag[selIdx].id : ""} />
               : <TT />
           } />
           <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
@@ -517,116 +737,6 @@ function PerGrantChart({ ag, fc }) {
   );
 }
 
-// ── AI Reallocation Suggestions ───────────────────────────────────────────────
-function AIsuggestions({ data, fc }) {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const D = safe(data);
-
-  async function getSuggestions() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-
-    const ag = D.grants.filter((g) => g && g.active);
-
-    // Build a concise summary for Claude
-    const grantSummary = ag.map((g, gi) => {
-      const lastBal = fc.length ? (fc[fc.length-1]["b"+gi] || 0) : 0;
-      const avgSpend = fc.length ? Math.round(fc.reduce((s,r) => s+(r["sp"+gi]||0),0)/fc.length) : 0;
-      const caps = g.caps || {};
-      const spend = computeGrantSpend(data, g.id, fc);
-      return {
-        code: g.code,
-        funder: g.funder,
-        endDate: g.endDate,
-        totalAward: g.totalAward,
-        forecastBalance: lastBal,
-        avgMonthlySpend: avgSpend,
-        caps: Object.keys(caps).length ? caps : "none set",
-        projectedSpend: spend,
-      };
-    });
-
-    const peopleSummary = D.people
-      .filter((p) => p.active !== false)
-      .map((p) => ({
-        name: p.name,
-        role: p.role,
-        baseMonthly: p.baseMonthly,
-        benefits: p.benefits,
-        startDate: p.startDate,
-        endDate: p.endDate || "open",
-        allocations: (p.allocations||[]).map((a) => {
-          const g = D.grants.find((g) => g.id === a.grantId);
-          return { grant: g ? g.code : "?", fraction: a.fraction, from: a.from||"start", to: a.to||"ongoing" };
-        }),
-      }));
-
-    const prompt = `You are a research grant management advisor for a synthetic biology laboratory. Analyze the following grant portfolio and personnel data, then provide specific, actionable reallocation recommendations to maximize how long the lab can operate before running out of funding.
-
-GRANT PORTFOLIO:
-${JSON.stringify(grantSummary, null, 2)}
-
-CURRENT PERSONNEL & ALLOCATIONS:
-${JSON.stringify(peopleSummary, null, 2)}
-
-Please provide:
-1. A brief assessment of the current situation (2-3 sentences max)
-2. Specific reallocation recommendations — name the person, the grant to move them to, the fraction, and the date to make the switch
-3. Any budget cap concerns
-4. Which grants are at risk of running over budget or expiring with money unspent
-
-Format your response clearly with numbered recommendations. Be specific with names, grant codes, fractions, and dates. Keep it concise — this is for a busy PI.`;
-
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-      const json = await res.json();
-      if (json.content && json.content[0]) {
-        setResult(json.content[0].text);
-      } else {
-        setError("No response received.");
-      }
-    } catch(e) {
-      setError("Request failed: " + e.message);
-    }
-    setLoading(false);
-  }
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 mt-4">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h2 className="text-base font-medium text-gray-700">AI reallocation suggestions</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Analyzes your grants, people and budget caps to suggest the best way to reallocate personnel</p>
-        </div>
-        <Btn onClick={getSuggestions} disabled={loading} v="primary">
-          {loading ? "Analysing..." : "Get suggestions"}
-        </Btn>
-      </div>
-      {error && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{error}</div>}
-      {result && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-          {result}
-        </div>
-      )}
-      {!result && !error && !loading && (
-        <div className="text-xs text-gray-400 text-center py-4">Click "Get suggestions" to analyse your portfolio and get reallocation recommendations.</div>
-      )}
-    </div>
-  );
-}
-
-// ── Dashboard ────────────────────────────────────────────────────────────────
 
 // ── Scenario Panel ────────────────────────────────────────────────────────────
 const SC_PERSON_BLANK = { id:"", name:"", role:"PhD Student", studentStatus:"Domestic", startDate:"", baseMonthly:"", grantId:"", fraction:"1", fellowshipId:"", notes:"" };
@@ -659,6 +769,7 @@ function ScenarioPanel({ data, fc, scenarioPeople, setScenarioPeople, scenarioLa
         ...p,
         active: true,
         benefits: ["Postdoc","Research Staff"].includes(p.role),
+        benefitsRate: p.benefitsRate || 0.21,
         salaryHistory: [],
         allocations: p.grantId ? [{ grantId: p.grantId, fraction: +p.fraction || 1, from:"", to:"" }] : [],
       })),
@@ -831,32 +942,71 @@ function ScenarioPanel({ data, fc, scenarioPeople, setScenarioPeople, scenarioLa
   );
 }
 
-function Dashboard({ data, fc }) {
+function Dashboard({ data, fc, fcMonths, setFcMonths }) {
   const [tab, setTab] = useState("portfolio");
   const [scenarioOn, setScenarioOn] = useState(false);
   const [scenarioPeople, setScenarioPeople] = useState([]);
   const [scenarioLabel, setScenarioLabel] = useState("");
+  const [excludedGrants, setExcludedGrants] = useState([]);
+
+  function toggleExclude(id) {
+    setExcludedGrants((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
   const D = safe(data);
   const ag = D.grants.filter((g) => g && g.active);
-  const totalAward = ag.reduce((s, g) => s + (+g.totalAward || 0), 0);
-  const lastBal = fc.length ? fc[fc.length-1].portBal : 0;
-  const avgBurn = fc.length ? Math.round(fc.reduce((s, r) => s + r.tSpend, 0) / fc.length) : 0;
-  const avgIDC = fc.length ? Math.round(fc.reduce((s, r) => s + r.tIDC, 0) / fc.length) : 0;
-  const biIdx = fc.findIndex((r) => r.portBal < 0);
-  const moZero = biIdx === -1 ? ">" + FCN + "mo" : biIdx + "mo";
+  // Filter metrics by visible grants (respects excludedGrants toggle)
+  const visibleAg = ag.filter((g) => !excludedGrants.includes(g.id));
+  const totalAward = visibleAg.reduce((s, g) => s + (+g.totalAward || 0), 0);
+
+  // Per-grant index lookup for visible grants
+  const lastBal = fc.length
+    ? Math.round(visibleAg.reduce((s, g) => {
+        const gi = ag.indexOf(g);
+        return s + (fc[fc.length-1]["b"+gi] || 0);
+      }, 0))
+    : 0;
+
+  const avgPersonnel = fc.length ? Math.round(
+    fc.reduce((s, r) => s + visibleAg.reduce((gs, g) => gs + (r["p"+ag.indexOf(g)] || 0), 0), 0) / fc.length
+  ) : 0;
+  const avgResearch = fc.length ? Math.round(
+    fc.reduce((s, r) => s + visibleAg.reduce((gs, g) => gs + (r["r"+ag.indexOf(g)] || 0), 0), 0) / fc.length
+  ) : 0;
+  const avgIDC = fc.length ? Math.round(
+    fc.reduce((s, r) => s + visibleAg.reduce((gs, g) => gs + (r["idc"+ag.indexOf(g)] || 0), 0), 0) / fc.length
+  ) : 0;
+
+  const biIdx = fc.findIndex((r) =>
+    visibleAg.reduce((s, g) => s + (r["b"+ag.indexOf(g)] || 0), 0) < 0
+  );
   const tabs = [["portfolio","Portfolio balance"],["pergrant","Per-grant"],["burn","Monthly burn"],["idc","IDC breakdown"],["cashflow","Cash flow"]];
   return (
     <div className="space-y-4">
       <div className="flex gap-3 flex-wrap items-start">
-        <Metric label="Total portfolio" value={f$(totalAward)} sub={ag.length + " active grant" + (ag.length!==1?"s":"")} />
-        <Metric label="Avg monthly burn" value={f$(avgBurn)} sub="personnel + research + IDC" />
+        <Metric label="Total portfolio" value={f$(totalAward)} sub={visibleAg.length + " of " + ag.length + " grant" + (ag.length!==1?"s":"") + (excludedGrants.length > 0 ? " shown" : "")} />
+        <Metric label="Avg monthly personnel" value={f$(avgPersonnel)} sub="salaries + benefits + tuition" />
+        <Metric label="Avg monthly research" value={f$(avgResearch)} sub="non-personnel direct costs" />
         <Metric label="Avg monthly IDC" value={f$(avgIDC)} sub="overhead charged" />
-        <Metric label="Balance at 36mo" value={f$(lastBal)} sub="end of forecast" warn={lastBal<0} />
-        <Metric label="Months to zero" value={moZero} sub="combined portfolio" warn={biIdx>0&&biIdx<18} />
-        <div className="flex-shrink-0 pt-1">
+        <Metric label={"Balance at " + fc.length + "mo"} value={f$(lastBal)} sub="end of forecast" warn={lastBal<0} />
+        <div className="flex-shrink-0 pt-1 space-y-1">
+          <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-lg px-3 py-2">
+            <span className="text-xs text-gray-500 whitespace-nowrap">Forecast</span>
+            <input
+              type="range"
+              min="6"
+              max="60"
+              step="6"
+              value={fcMonths}
+              onChange={(e) => setFcMonths(+e.target.value)}
+              className="w-28"
+            />
+            <span className="text-xs font-medium text-blue-700 min-w-[32px]">{fcMonths}mo</span>
+          </div>
           <button
             onClick={() => setScenarioOn((v) => !v)}
-            className={"px-4 py-2 rounded-lg text-sm font-medium border-2 transition-colors no-print " +
+            className={"w-full px-4 py-2 rounded-lg text-sm font-medium border-2 transition-colors no-print " +
               (scenarioOn
                 ? "bg-amber-600 text-white border-amber-600"
                 : "bg-white text-amber-700 border-amber-400 hover:bg-amber-50")}
@@ -871,50 +1021,87 @@ function Dashboard({ data, fc }) {
             <button key={k} onClick={() => setTab(k)} className={"px-3 py-1.5 rounded-md text-xs font-medium " + (tab===k?"bg-blue-700 text-white":"bg-gray-100 text-gray-600 hover:bg-gray-200")}>{l}</button>
           ))}
         </div>
-        {tab==="portfolio" && (
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={fc} margin={{ top:4, right:8, left:8, bottom:4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="label" tick={{ fontSize:10 }} interval={5} />
-              <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
-              <Tooltip content={<TT />} />
-              <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
-              {(() => {
-                // Sort grants by end date so stagger is consistent
-                const withEnd = ag
-                  .map((g, gi) => ({ g, gi }))
-                  .filter(({ g }) => g.endDate)
-                  .sort((a, b) => a.g.endDate > b.g.endDate ? 1 : -1);
-                const fc0 = new Date(FC0 + "T00:00:00Z");
-                // Stagger offsets cycle through different vertical positions
-                const offsets = [10, 28, 46, 64, 82];
-                return withEnd.map(({ g, gi }, idx) => {
-                  const end = new Date(g.endDate + "T00:00:00Z");
-                  const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
-                  const clamped = Math.max(0, Math.min(fc.length - 1, mi));
-                  const lbl = fc[clamped] ? fc[clamped].label : null;
-                  if (!lbl) return null;
-                  const offsetY = offsets[idx % offsets.length];
+        {tab==="portfolio" && (() => {
+          // Build filtered chart data excluding unchecked grants
+          // visibleAg defined above in Dashboard scope
+          const filteredData = fc.map((row) => {
+            const filteredBal = ag.reduce((s, g, gi) => {
+              if (excludedGrants.includes(g.id)) return s;
+              return s + (row["b"+gi] || 0);
+            }, 0);
+            return { ...row, filteredPortBal: Math.round(filteredBal) };
+          });
+          const filteredBankrupt = filteredData.findIndex((r) => r.filteredPortBal < 0);
+          return (
+            <div>
+              {/* Grant filter toggles */}
+              <div className="flex gap-2 flex-wrap mb-3 items-center">
+                <span className="text-xs text-gray-400">Include:</span>
+                {ag.map((g, gi) => {
+                  const excluded = excludedGrants.includes(g.id);
                   return (
-                    <ReferenceLine key={"pend-"+g.id} x={lbl}
-                      stroke={GC[gi%GC.length]} strokeDasharray="6 3" strokeWidth={1.5}
-                      label={{
-                        value: g.code,
-                        position: "insideTopRight",
-                        fontSize: 9,
-                        fill: GC[gi%GC.length],
-                        fontWeight: 500,
-                        dy: offsetY,
-                      }}
-                    />
+                    <button key={g.id} onClick={() => toggleExclude(g.id)}
+                      className={"px-3 py-1 rounded text-xs font-medium border transition-colors " +
+                        (excluded
+                          ? "bg-white text-gray-400 border-gray-200 line-through"
+                          : "text-white border-transparent")}
+                      style={excluded ? {} : { background: GC[gi%GC.length], borderColor: GC[gi%GC.length] }}>
+                      {g.code}
+                    </button>
                   );
-                });
-              })()}
-              <Area type="monotone" dataKey="portBal" name="Portfolio balance" stroke="#185FA5" fill="#E6F1FB" strokeWidth={2} dot={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-        {tab==="pergrant" && <PerGrantChart ag={ag} fc={fc} />}
+                })}
+                {excludedGrants.length > 0 && (
+                  <button onClick={() => setExcludedGrants([])}
+                    className="text-xs text-blue-500 hover:text-blue-700 ml-1">
+                    Show all
+                  </button>
+                )}
+                {excludedGrants.length > 0 && (
+                  <span className="text-xs text-amber-600 ml-1">
+                    Portfolio without {excludedGrants.map((id) => ag.find((g) => g.id===id)?.code).filter(Boolean).join(", ")}
+                  </span>
+                )}
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={filteredData} margin={{ top:4, right:8, left:8, bottom:4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="label" tick={{ fontSize:10 }} interval={5} />
+                  <YAxis tickFormatter={fk} tick={{ fontSize:10 }} width={52} />
+                  <Tooltip content={<TT />} />
+                  <ReferenceLine y={0} stroke="#E24B4A" strokeDasharray="5 3" strokeWidth={1.5} />
+                  {filteredBankrupt > 0 && (
+                    <ReferenceLine x={filteredData[filteredBankrupt]?.label}
+                      stroke="#E24B4A" strokeWidth={2}
+                      label={{ value: "Zero", position: "insideTopLeft", fontSize: 9, fill: "#E24B4A" }} />
+                  )}
+                  {(() => {
+                    const withEnd = visibleAg
+                      .map((g) => ({ g, gi: ag.indexOf(g) }))
+                      .filter(({ g }) => g.endDate)
+                      .sort((a, b) => a.g.endDate > b.g.endDate ? 1 : -1);
+                    const fc0 = new Date(FC0 + "T00:00:00Z");
+                    const offsets = [10, 28, 46, 64, 82];
+                    return withEnd.map(({ g, gi }, idx) => {
+                      const end = new Date(g.endDate + "T00:00:00Z");
+                      const mi = Math.round((end - fc0) / (1000 * 60 * 60 * 24 * 30.4));
+                      const clamped = Math.max(0, Math.min(fc.length - 1, mi));
+                      const lbl = fc[clamped] ? fc[clamped].label : null;
+                      if (!lbl) return null;
+                      return (
+                        <ReferenceLine key={"pend-"+g.id} x={lbl}
+                          stroke={GC[gi%GC.length]} strokeDasharray="6 3" strokeWidth={1.5}
+                          label={{ value: g.code, position: "insideTopRight", fontSize: 9,
+                            fill: GC[gi%GC.length], fontWeight: 500, dy: offsets[idx%offsets.length] }} />
+                      );
+                    });
+                  })()}
+                  <Area type="monotone" dataKey="filteredPortBal" name="Portfolio balance" stroke="#185FA5" fill="#E6F1FB" strokeWidth={2} dot={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          );
+        })()}
+        {tab==="pergrant" && <PerGrantChart ag={ag} fc={fc} data={data} />}
         {tab==="burn" && (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={fc} margin={{ top:4, right:8, left:8, bottom:4 }}>
@@ -1012,16 +1199,116 @@ function Dashboard({ data, fc }) {
           setScenarioLabel={setScenarioLabel}
         />
       )}
-      <AIsuggestions data={data} fc={fc} />
     </div>
   );
 }
 
 // ── Grants ───────────────────────────────────────────────────────────────────
-function Grants({ data, setData }) {
+// ── Fiscal year breakdown helper (Apr–Mar) ───────────────────────────────────
+function getFYBreakdown(data, grantId, fc) {
+  const D = safe(data);
+  const g = D.grants.find((g) => g.id === grantId);
+  if (!g || !fc.length) return [];
+  const gi = D.grants.filter((g) => g.active).findIndex((g) => g.id === grantId);
+  if (gi < 0) return [];
+
+  // Group fc rows into fiscal years (Apr = month 3 in JS, 0-indexed)
+  const fyMap = {};
+  fc.forEach((row) => {
+    // Parse label back to date via FC0 offset
+    const idx = fc.indexOf(row);
+    const md = addMo(FC0, idx);
+    const month = md.getUTCMonth(); // 0-indexed
+    const year  = md.getUTCFullYear();
+    // FY starts April (month 3) — FY2026 = Apr 2025 – Mar 2026
+    const fyYear = month >= 3 ? year + 1 : year;
+    const fyKey  = "FY" + fyYear;
+    if (!fyMap[fyKey]) fyMap[fyKey] = { fy: fyKey, personnel: 0, research: 0, idc: 0, inflows: 0 };
+    fyMap[fyKey].personnel += row["p"+gi]   || 0;
+    fyMap[fyKey].research  += row["r"+gi]   || 0;
+    fyMap[fyKey].idc       += row["idc"+gi] || 0;
+    fyMap[fyKey].inflows   += row.tI > 0 ? (
+      D.inflows.filter((i) => {
+        if (i.grantId !== grantId || !i.date) return false;
+        const id = new Date(i.date + "T00:00:00Z");
+        return id.getUTCFullYear() === md.getUTCFullYear() && id.getUTCMonth() === md.getUTCMonth();
+      }).reduce((s, i) => s + (+i.amount || 0), 0)
+    ) : 0;
+  });
+
+  // Research by category per FY
+  const cats = {};
+  D.research.filter((r) => r.grantId === grantId).forEach((r) => {
+    fc.forEach((row, idx) => {
+      const md = addMo(FC0, idx);
+      if (r.from && md < new Date(r.from + "-01T00:00:00Z")) return;
+      if (r.to   && md > new Date(r.to   + "-01T00:00:00Z")) return;
+      const month = md.getUTCMonth();
+      const year  = md.getUTCFullYear();
+      const fyYear = month >= 3 ? year + 1 : year;
+      const fyKey  = "FY" + fyYear;
+      if (!cats[fyKey]) cats[fyKey] = {};
+      if (!cats[fyKey][r.category]) cats[fyKey][r.category] = 0;
+      const base = (+r.monthlyBase || 0) * Math.pow(1 + (+r.escalation || 0), Math.floor(Math.max(0, yrs(g.startDate || FC0, md))));
+      cats[fyKey][r.category] += base;
+    });
+  });
+
+  // Personnel by person per FY
+  const people = {};
+  D.people.forEach((p) => {
+    const allocs = (p.allocations || []).filter((a) => a.grantId === grantId);
+    if (!allocs.length) return;
+    fc.forEach((row, idx) => {
+      const md = addMo(FC0, idx);
+      if (!active(p, md)) return;
+      const payFrac = payRunFrac(null, p, md, grantId, p.allocations || []);
+      if (!payFrac) return;
+      const history = Array.isArray(p.salaryHistory) ? p.salaryHistory : [];
+      const activeRate = history.find((h) => {
+        if (!h || !h.base) return false;
+        if (h.from && md < new Date(h.from + "T00:00:00Z")) return false;
+        if (h.to   && md > new Date(h.to   + "T00:00:00Z")) return false;
+        return true;
+      });
+      const base = activeRate ? (+activeRate.base || 0) : (+p.baseMonthly || 0);
+      const isStudent = ["PhD Student","MSc Student"].includes(p.role);
+      const isPostdoc = p.role === "Postdoc";
+      const benRate   = +p.benefitsRate || 0.21;
+      const tuition   = getTuitionMonthly(p, md, D.settings);
+      const felOff    = getFellowshipOffset(p, md, D.fellowships || []);
+      const grantStipend = Math.max(0, base - felOff.stipend);
+      const grantTuition = felOff.coversTuition ? Math.max(0, tuition - felOff.tuitionAmount) : tuition;
+      const cost = isStudent ? (grantStipend + grantTuition) : base * (p.benefits ? 1 + benRate : 1);
+      const month = md.getUTCMonth();
+      const year  = md.getUTCFullYear();
+      const fyYear = month >= 3 ? year + 1 : year;
+      const fyKey  = "FY" + fyYear;
+      if (!people[fyKey]) people[fyKey] = {};
+      if (!people[fyKey][p.name||p.role]) people[fyKey][p.name||p.role] = 0;
+      people[fyKey][p.name||p.role] += cost * payFrac;
+    });
+  });
+
+  return Object.values(fyMap).map((fy) => ({
+    ...fy,
+    personnel: Math.round(fy.personnel),
+    research:  Math.round(fy.research),
+    idc:       Math.round(fy.idc),
+    inflows:   Math.round(fy.inflows),
+    total:     Math.round(fy.personnel + fy.research + fy.idc),
+    net:       Math.round(fy.inflows - fy.personnel - fy.research - fy.idc),
+    cats:      cats[fy.fy] || {},
+    people:    people[fy.fy] || {},
+  }));
+}
+
+function Grants({ data, setData, fc }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
   const [infForm, setInfForm] = useState(null);
+  const [expandedGrant, setExpandedGrant] = useState(null);
+  const [expandedFYSection, setExpandedFYSection] = useState({}); // {fyKey: "personnel"|"research"|null}
   const BG = { code:"",funder:"",fullName:"",type:"Operating",startDate:"",endDate:"",totalAward:"",idcRate:0.25,idcExempt:false,notes:"" };
 
   function saveGrant() {
@@ -1070,6 +1357,59 @@ function Grants({ data, setData }) {
       </div>
       <Card>
         <SH title="Grants registry" action={<Btn onClick={() => setForm({...BG})}>+ Add grant</Btn>} />
+        {expandedGrant && (() => {
+          const g = D.grants.find((g) => g.id === expandedGrant);
+          if (!g) return null;
+          const fyRows = getFYBreakdown(data, expandedGrant, fc || []);
+          return (
+            <div className="mb-4 border border-blue-200 rounded-lg overflow-hidden">
+              <div className="bg-blue-700 text-white px-4 py-2 flex items-center justify-between">
+                <span className="text-sm font-medium">{g.code} — Fiscal Year Breakdown (Apr–Mar)</span>
+                <button onClick={() => { setExpandedGrant(null); setExpandedFYSection({}); }} className="text-blue-200 hover:text-white text-xs px-2 py-0.5 border border-blue-500 rounded">Close</button>
+              </div>
+              {fyRows.length === 0 && <div className="p-4 text-xs text-gray-400">No forecast data available.</div>}
+              {fyRows.map((fy) => (
+                <div key={fy.fy} className="border-b border-blue-100 last:border-0">
+                  <div className="flex gap-2 flex-wrap items-center px-4 py-2 bg-blue-50">
+                    <span className="text-xs font-medium text-blue-800 w-16">{fy.fy}</span>
+                    <button onClick={() => setExpandedFYSection((prev) => ({...prev, [expandedGrant+fy.fy]: prev[expandedGrant+fy.fy]==="personnel"?null:"personnel"}))}
+                      className={"text-xs px-2 py-1 rounded border " + (expandedFYSection[expandedGrant+fy.fy]==="personnel" ? "bg-blue-700 text-white border-blue-700" : "bg-white text-blue-600 border-blue-300")}>
+                      Personnel {f$(fy.personnel)}
+                    </button>
+                    <button onClick={() => setExpandedFYSection((prev) => ({...prev, [expandedGrant+fy.fy]: prev[expandedGrant+fy.fy]==="research"?null:"research"}))}
+                      className={"text-xs px-2 py-1 rounded border " + (expandedFYSection[expandedGrant+fy.fy]==="research" ? "bg-green-700 text-white border-green-700" : "bg-white text-green-600 border-green-300")}>
+                      Research {f$(fy.research)}
+                    </button>
+                    <span className="text-xs text-gray-500">IDC {f$(fy.idc)}</span>
+                    <span className="text-xs font-medium text-gray-800">Total {f$(fy.total)}</span>
+                    <span className="text-xs text-green-700">Inflows {f$(fy.inflows)}</span>
+                    <span className={"text-xs font-medium " + (fy.net>=0?"text-green-700":"text-red-600")}>Net {fy.net>=0?"+":""}{f$(fy.net)}</span>
+                  </div>
+                  {expandedFYSection[expandedGrant+fy.fy] === "personnel" && (
+                    <div className="px-6 py-2 bg-white">
+                      {Object.entries(fy.people).sort((a,b)=>b[1]-a[1]).map(([name,cost]) => (
+                        <div key={name} className="flex justify-between py-1 border-b border-gray-50 text-xs">
+                          <span className="text-blue-700">&#8627; {name}</span>
+                          <span className="font-medium text-blue-800">{f$(Math.round(cost))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {expandedFYSection[expandedGrant+fy.fy] === "research" && (
+                    <div className="px-6 py-2 bg-white">
+                      {Object.entries(fy.cats).sort((a,b)=>b[1]-a[1]).map(([cat,cost]) => (
+                        <div key={cat} className="flex justify-between py-1 border-b border-gray-50 text-xs">
+                          <span className="text-green-700">&#8627; {cat}</span>
+                          <span className="font-medium text-green-800">{f$(Math.round(cost))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         {form && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
             <div className="font-medium text-blue-800 mb-3 text-sm">{form.id?"Edit grant":"New grant"}</div>
@@ -1130,6 +1470,7 @@ function Grants({ data, setData }) {
                   <td className="py-2 pr-3 text-center">{g.idcExempt?<Badge c="gray">Exempt</Badge>:<Badge c="purple">{fp(g.idcRate)}</Badge>}</td>
                   <td className="py-2 pr-3 text-xs text-gray-400 max-w-[120px] truncate">{g.notes}</td>
                   <td className="py-2 whitespace-nowrap">
+                    <Btn onClick={() => setExpandedGrant(expandedGrant===g.id?null:g.id)} v="secondary" sm>{expandedGrant===g.id?"▲ Hide":"▼ FY"}</Btn>
                     <Btn onClick={() => setForm({...g})} v="ghost" sm>Edit</Btn>
                     <Btn onClick={() => deleteGrant(g.id)} v="danger" sm>Del</Btn>
                   </td>
@@ -1192,7 +1533,7 @@ function Grants({ data, setData }) {
 function People({ data, setData }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
-  const BP = { name:"",role:"PhD Student",studentStatus:"Domestic",startDate:"",endDate:"",baseMonthly:"",benefits:false,allocations:[{grantId:"",fraction:""}],fellowship:"",fellowshipId:"",fellowshipStart:"",notes:"" };
+  const BP = { name:"",role:"PhD Student",studentStatus:"Domestic",startDate:"",endDate:"",baseMonthly:"",benefits:false,benefitsRate:0.21,allocations:[{grantId:"",fraction:""}],fellowship:"",fellowshipId:"",fellowshipStart:"",notes:"" };
 
   function savePerson() {
     if (!form.name||!form.startDate||!form.baseMonthly) return alert("Name, start date and monthly base required.");
@@ -1273,7 +1614,23 @@ function People({ data, setData }) {
               <FL label="Program / hire start *"><Inp type="date" value={form.startDate} onChange={(e) => setForm((f) => ({...f,startDate:e.target.value}))} /></FL>
               <FL label="Expected end / graduation"><Inp type="date" value={form.endDate||""} onChange={(e) => setForm((f) => ({...f,endDate:e.target.value}))} /></FL>
               <FL label="Current base monthly ($) *"><Inp type="number" value={form.baseMonthly} onChange={(e) => setForm((f) => ({...f,baseMonthly:e.target.value}))} /></FL>
-              <FL label="Benefits (staff/postdoc)"><Sel value={form.benefits?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,benefits:e.target.value==="YES"}))}><option>YES</option><option>NO</option></Sel></FL>
+              <FL label="Benefits">
+                <Sel value={form.benefits?"YES":"NO"} onChange={(e) => setForm((f) => ({...f,benefits:e.target.value==="YES",benefitsRate:e.target.value==="YES"?(f.benefitsRate||0.21):0}))}>
+                  <option>YES</option><option>NO</option>
+                </Sel>
+              </FL>
+              {form.benefits && (
+                <FL label="Benefits rate">
+                  <div className="flex items-center gap-2">
+                    <Inp type="number" step="0.01" min="0" max="0.5"
+                      value={form.benefitsRate||0.21}
+                      onChange={(e) => setForm((f) => ({...f,benefitsRate:+e.target.value}))}
+                      className="w-24"
+                    />
+                    <span className="text-xs text-gray-400">{Math.round((+form.benefitsRate||0.21)*100)}% — M&P: 21%, Tech/RA: 24%</span>
+                  </div>
+                </FL>
+              )}
               {["PhD Student","MSc Student"].includes(form.role) && (
                 <FL label="Student status">
                   <Sel value={form.studentStatus||"Domestic"} onChange={(e) => setForm((f) => ({...f,studentStatus:e.target.value}))}>
@@ -1343,8 +1700,8 @@ function People({ data, setData }) {
               <Btn onClick={addAlloc} v="secondary" sm>+ Add grant slot</Btn>
             </div>
             <div className="mb-3 mt-2">
-              <div className="text-xs text-gray-500 mb-1">Salary / stipend history <span className="text-gray-400">(optional — only needed if base changed over time)</span></div>
-              <div className="text-xs text-gray-400 mb-2">Leave empty to use "Current base monthly" for the full forecast. Add rows when the salary changed at a specific date.</div>
+              <div className="text-xs text-gray-500 mb-1">Salary / stipend timeline <span className="text-gray-400">(optional — past and future periods)</span></div>
+              <div className="text-xs text-gray-400 mb-2">Add a row for each period where the salary or benefits rate differs. Leave blank to use the current base monthly and benefits rate for the full forecast. Future dates are treated as upcoming changes.</div>
               {(form.salaryHistory||[]).map((h, i) => (
                 <div key={i} className="bg-gray-50 rounded-lg p-3 mb-2 border border-gray-200 flex gap-2 items-end flex-wrap">
                   <div className="w-28">
@@ -1359,10 +1716,21 @@ function People({ data, setData }) {
                     <div className="text-xs text-gray-400 mb-1">To (blank = ongoing)</div>
                     <Inp type="date" value={h.to||""} onChange={(e) => updSalaryHistory(i, "to", e.target.value)}/>
                   </div>
+                  {form.benefits && (
+                    <div className="w-28">
+                      <div className="text-xs text-gray-400 mb-1">Benefits rate (blank = inherit)</div>
+                      <Inp type="number" step="0.01" min="0" max="0.5"
+                        value={h.benefitsRate||""}
+                        onChange={(e) => updSalaryHistory(i, "benefitsRate", e.target.value)}
+                        placeholder={String(Math.round((+form.benefitsRate||0.21)*100)) + "%"}
+                      />
+                    </div>
+                  )}
                   <button onClick={() => removeSalaryHistory(i)} className="text-red-400 hover:text-red-600 px-2 pb-1">x</button>
                 </div>
               ))}
               <Btn onClick={addSalaryHistory} v="secondary" sm>+ Add salary period</Btn>
+              <span className="text-xs text-gray-400 ml-2">Leave benefits rate blank to inherit from the person's current rate</span>
             </div>
             <div className="flex gap-2"><Btn onClick={savePerson}>Save</Btn><Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn></div>
           </div>
@@ -1384,7 +1752,14 @@ function People({ data, setData }) {
                         {p.active ? "YES" : "NO"}
                       </button>
                     </td>
-                    <td className="py-2 pr-3 font-medium">{p.name}</td>
+                    <td className="py-2 pr-3 font-medium">
+                      {p.name}
+                      {(() => {
+                        const gap = firstUnallocatedDate(p);
+                        if (!gap) return null;
+                        return <div className="text-xs text-yellow-600 font-normal mt-0.5">⚠ Unallocated from {gap}</div>;
+                      })()}
+                    </td>
                     <td className="py-2 pr-3"><Badge c={p.role==="Postdoc"?"blue":p.role==="Research Staff"?"gray":"green"}>{p.role}</Badge></td>
                     <td className={"py-2 pr-3 text-sm font-medium " + (late?"text-red-600":"text-gray-600")}>{yrStr}</td>
                     <td className="py-2 pr-3 text-xs text-gray-500">{p.startDate}</td>
@@ -1400,7 +1775,6 @@ function People({ data, setData }) {
                         const tui = getTuitionMonthly(p, now, D.settings);
                         const felOff = getFellowshipOffset(p, now, D.fellowships||[]);
                         const grantPays = Math.max(0, +p.baseMonthly - felOff.stipend) + (felOff.coversTuition ? Math.max(0, tui - felOff.tuitionAmount) : tui);
-                        const total = +p.baseMonthly + tui;
                         return (
                           <div>
                             <div className="text-gray-800">{f$(Math.round(grantPays))}/mo</div>
@@ -1408,7 +1782,17 @@ function People({ data, setData }) {
                             {felOff.stipend > 0 && <div className="text-green-600">–{f$(felOff.stipend)} fellowship</div>}
                           </div>
                         );
-                      })() : <span className="text-gray-400">—</span>}
+                      })() : p.benefits ? (
+                        <div>
+                          <div className="text-gray-800">{f$(Math.round(+p.baseMonthly * (1 + (+p.benefitsRate||0.21))))}/mo</div>
+                          <div className="text-gray-400">incl. {Math.round((+p.benefitsRate||0.21)*100)}% benefits</div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-gray-800">{f$(+p.baseMonthly||0)}/mo</div>
+                          <div className="text-gray-400">no benefits</div>
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 pr-3 text-xs">
                       {(p.allocations||[]).filter((a) => a.grantId).map((a, i) => {
@@ -1445,7 +1829,10 @@ function Research({ data, setData }) {
   const [form, setForm] = useState(null);
   const [filter, setFilter] = useState("");
   const [monthFilter, setMonthFilter] = useState("");
+  const [grantFilter, setGrantFilter] = useState("");
   const BR = { grantId:"",category:"",monthlyBase:"",escalation:0,from:"",to:"",notes:"" };
+  // When adding new item, pre-select the currently filtered grant
+  function openNewForm() { setForm({...BR, grantId: grantFilter || ""}); }
 
   function saveResearch() {
     if (!form.grantId||!form.category||!form.monthlyBase) return alert("Grant, category and monthly base required.");
@@ -1471,6 +1858,7 @@ function Research({ data, setData }) {
     return { ...g, total: monthlyTotal, count: items.length, periodTotal, hasPeriods };
   });
   const filtered = D.research.filter((r) => {
+    if (grantFilter && r.grantId !== grantFilter) return false;
     if (filter && !r.category.toLowerCase().includes(filter.toLowerCase())) return false;
     if (monthFilter) {
       const md = new Date(monthFilter + "-01T00:00:00Z");
@@ -1493,7 +1881,7 @@ function Research({ data, setData }) {
         ))}
       </div>
       <Card>
-        <SH title="Research cost items" action={<Btn onClick={() => setForm({...BR})}>+ Add cost item</Btn>} />
+        <SH title="Research cost items" action={<Btn onClick={openNewForm}>+ Add cost item</Btn>} />
         <p className="text-xs text-gray-400 mb-3">Suggested: {CATS.slice(0,6).join(" · ")} ...</p>
         {form && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
@@ -1513,6 +1901,25 @@ function Research({ data, setData }) {
             <div className="flex gap-2"><Btn onClick={saveResearch}>Save</Btn><Btn onClick={() => setForm(null)} v="secondary">Cancel</Btn></div>
           </div>
         )}
+        {/* Grant filter buttons */}
+        <div className="flex gap-2 flex-wrap items-center mb-3">
+          <span className="text-xs text-gray-400">Grant:</span>
+          <button onClick={() => setGrantFilter("")}
+            className={"px-3 py-1 rounded text-xs font-medium border " + (!grantFilter ? "bg-blue-700 text-white border-blue-700" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
+            All
+          </button>
+          {D.grants.filter((g) => g.active).map((g) => {
+            const count = D.research.filter((r) => r.grantId === g.id).length;
+            if (count === 0) return null;
+            const active = grantFilter === g.id;
+            return (
+              <button key={g.id} onClick={() => setGrantFilter(active ? "" : g.id)}
+                className={"px-3 py-1 rounded text-xs font-medium border " + (active ? "bg-blue-700 text-white border-blue-700" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
+                {g.code} <span className={active ? "text-blue-200" : "text-gray-400"}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
         <div className="flex gap-3 mb-3 flex-wrap items-end">
           <div>
             <div className="text-xs text-gray-400 mb-1">Filter by category</div>
@@ -1578,34 +1985,176 @@ function Research({ data, setData }) {
 // ── Students ─────────────────────────────────────────────────────────────────
 function Students({ data }) {
   const D = safe(data);
-  const trainees = D.people.filter((p) => p.active && ["PhD Student","MSc Student","Postdoc"].includes(p.role));
+
+  // All role groups
+  const GROUPS = [
+    { key: "students",    label: "Students",           roles: ["PhD Student","MSc Student"] },
+    { key: "postdocs",    label: "Postdocs",            roles: ["Postdoc"] },
+    { key: "associates",  label: "Research Associates", roles: ["Research Associate"] },
+    { key: "staff",       label: "Staff",               roles: ["Research Staff"] },
+    { key: "other",       label: "Other",               roles: ["Undergraduate","Prospective Student"] },
+  ];
+
+  const [activeGroups, setActiveGroups] = useState(["students","postdocs","associates","staff","other"]);
+
+  function toggleGroup(key) {
+    setActiveGroups((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  }
+
+  const activeRoles = GROUPS.filter((g) => activeGroups.includes(g.key)).flatMap((g) => g.roles);
+  const people = D.people.filter((p) => p.active !== false && activeRoles.includes(p.role));
+
+  function PersonCard({ p }) {
+    const y = yrs(p.startDate, new Date());
+    const rec = recForStudent(p);
+    const rs = rec ? RS[rec.level] : null;
+    const mo = p.endDate ? moLeft(p.endDate) : null;
+    const gap = firstUnallocatedDate(p);
+    const grants = (p.allocations||[]).filter((a) => a.grantId).map((a) => {
+      const g = D.grants.find((g) => g.id===a.grantId);
+      return g ? g.code+" ("+(+a.fraction*100).toFixed(0)+"%)" : null;
+    }).filter(Boolean);
+
+    const isStudent = ["PhD Student","MSc Student"].includes(p.role);
+    const yearLabel = isStudent
+      ? "Year " + (Math.floor(y)+1)
+      : p.role === "Postdoc" || p.role === "Research Associate"
+        ? "PD/RA year " + (Math.floor(y)+1)
+        : "—";
+
+    // ── Annual salary calculation ─────────────────────────────────────────────
+    const history = Array.isArray(p.salaryHistory) ? p.salaryHistory : [];
+    const todayStr = new Date().toISOString().slice(0,10);
+
+    // Current salary = baseMonthly (what they're being paid right now)
+    const base = +p.baseMonthly || 0;
+    const annualSalary = base * 12;
+    const benRate = +p.benefitsRate || 0.21;
+    const annualCost = isStudent ? annualSalary : Math.round(annualSalary * (p.benefits ? 1 + benRate : 1));
+
+    // Future raise: earliest history row with a from date in the future
+    const futureRaise = history
+      .filter((h) => h.base && h.from && h.from > todayStr)
+      .sort((a, b) => a.from < b.from ? -1 : 1)[0];
+
+    // Past change: most recent history row already in effect
+    const pastChange = history
+      .filter((h) => h.base && h.from && h.from <= todayStr)
+      .sort((a, b) => a.from > b.from ? -1 : 1)[0];
+
+    const isSeptChange = pastChange && pastChange.from && pastChange.from.includes("-09-");
+    const salaryLabel = isStudent
+      ? (pastChange ? (isSeptChange ? "Updated stipend as of Sep " + pastChange.from.slice(0,4) : "Updated stipend as of " + pastChange.from.slice(0,7)) : null)
+      : (pastChange ? "Salary updated " + pastChange.from.slice(0,7) : null);
+
+    const futureBase = futureRaise ? (+futureRaise.base || 0) : 0;
+    const futureAnnual = futureBase * 12;
+    // Use the period-specific benefits rate if set, otherwise inherit current
+    const futureBenRate = (futureRaise && futureRaise.benefitsRate) ? +futureRaise.benefitsRate : benRate;
+    const futureCost = Math.round(futureAnnual * (p.benefits ? 1 + futureBenRate : 1));
+    const futureLabel = futureRaise
+      ? (isStudent
+          ? "Stipend changing to " + f$(futureBase) + "/mo from " + futureRaise.from.slice(0,7)
+          : "New salary from " + futureRaise.from.slice(0,7) + ": " + f$(futureBase) + "/mo → " + f$(futureAnnual) + "/yr · " + f$(futureCost) + "/yr to lab (incl. " + Math.round(futureBenRate*100) + "% benefits)")
+      : null;
+
+    // Card border: unallocated overrides everything
+    const cardStyle = gap
+      ? "bg-yellow-50 border-yellow-300 border-l-yellow-400"
+      : rs ? rs.bg + " " + rs.border
+      : "bg-white border-gray-200 border-l-gray-300";
+
+    return (
+      <div className={"rounded-lg p-4 border-l-4 border " + cardStyle}>
+        <div className="flex justify-between items-start gap-3 flex-wrap">
+          <div className="flex-1">
+            <div className="font-medium text-gray-800">{p.name}</div>
+            <div className="text-xs text-gray-500 mt-1">
+              {p.role} · {yearLabel} · Started {p.startDate}
+              {mo !== null && <span className={"ml-2 " + (mo<12 ? "text-red-600 font-medium" : "")}> · {mo}mo funding left</span>}
+            </div>
+            <div className="text-xs text-gray-400 mt-1">
+              Grants: {grants.join(", ")||"none"}
+              {isStudent && p.fellowship && <span> · Fellowship: {p.fellowship}</span>}
+            </div>
+            {gap && (
+              <div className="text-xs text-yellow-700 font-medium mt-1">
+                ⚠ No allocation from {gap} — add a grant slot in People tab
+              </div>
+            )}
+            {/* Annual salary line */}
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              {salaryLabel && (
+                <div className="text-xs text-blue-600 font-medium mb-0.5">{salaryLabel}</div>
+              )}
+              <div className="flex gap-4 flex-wrap">
+                <div className="text-xs text-gray-500">
+                  <span className="text-gray-400">Current: </span>
+                  {f$(base)}/mo
+                  <span className="text-gray-400 ml-1">→</span>
+                  <span className="font-medium text-gray-700 ml-1">{f$(annualSalary)}/yr</span>
+                </div>
+                {!isStudent && (
+                  <div className="text-xs text-gray-400">
+                    Total to lab: <span className="font-medium text-gray-600">{f$(annualCost)}/yr</span>
+                    {p.benefits && <span className="ml-1">(incl. {Math.round(benRate*100)}% benefits)</span>}
+                  </div>
+                )}
+              </div>
+              {futureLabel && (
+                <div className="text-xs text-green-600 font-medium mt-1">↑ {futureLabel}</div>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 items-end">
+            {gap && <span className="px-2 py-1 rounded text-xs font-medium bg-yellow-100 text-yellow-800">Unallocated</span>}
+            {rs && !gap && <span className={"px-2 py-1 rounded text-xs font-medium " + rs.badge}>{rs.lbl}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
-      <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs text-purple-700">Recommendations auto-generate from role and year in program. Update Fellowship Status in People tab when awards are received.</div>
-      {trainees.length === 0 && <div className="text-center py-12 text-gray-400">No active trainees. Add people in the People tab.</div>}
-      {trainees.map((p) => {
-        const y = yrs(p.startDate, new Date());
-        const rec = recForStudent(p);
-        const rs = rec ? RS[rec.level] : null;
-        const mo = p.endDate ? moLeft(p.endDate) : null;
-        const grants = (p.allocations||[]).filter((a) => a.grantId).map((a) => {
-          const g = D.grants.find((g) => g.id===a.grantId);
-          return g ? g.code+" ("+(+a.fraction*100).toFixed(0)+"%)" : null;
-        }).filter(Boolean);
-        return (
-          <div key={p.id} className={"rounded-lg p-4 border-l-4 border " + (rs ? rs.bg+" "+rs.border : "bg-white border-gray-200 border-l-gray-300")}>
-            <div className="flex justify-between items-start gap-3 flex-wrap">
-              <div>
-                <div className="font-medium text-gray-800">{p.name}</div>
-                <div className="text-xs text-gray-500 mt-1">{p.role} · Year {Math.floor(y)+1} · Started {p.startDate}{mo!==null && <span className={"ml-2 "+(mo<12?"text-red-600 font-medium":"")}> · {mo}mo funding left</span>}</div>
-                <div className="text-xs text-gray-400 mt-1">Grants: {grants.join(", ")||"none"} · Fellowship: {p.fellowship||"none"}</div>
-              </div>
-              {rs && <span className={"px-2 py-1 rounded text-xs font-medium flex-shrink-0 "+rs.badge}>{rs.lbl}</span>}
-            </div>
+      {/* Group toggles */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <span className="text-xs text-gray-400">Show:</span>
+        {GROUPS.map((g) => {
+          const count = D.people.filter((p) => p.active !== false && g.roles.includes(p.role)).length;
+          if (count === 0) return null;
+          const on = activeGroups.includes(g.key);
+          return (
+            <button key={g.key} onClick={() => toggleGroup(g.key)}
+              className={"px-3 py-1 rounded text-xs font-medium border transition-colors " +
+                (on ? "bg-blue-700 text-white border-blue-700" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50")}>
+              {g.label} <span className={"ml-1 " + (on ? "text-blue-200" : "text-gray-400")}>{count}</span>
+            </button>
+          );
+        })}
+        <button onClick={() => setActiveGroups(GROUPS.map((g) => g.key))}
+          className="text-xs text-blue-500 hover:text-blue-700 ml-1">Show all</button>
+      </div>
 
+      {/* Cards per group */}
+      {GROUPS.filter((g) => activeGroups.includes(g.key)).map((g) => {
+        const groupPeople = D.people.filter((p) => p.active !== false && g.roles.includes(p.role));
+        if (groupPeople.length === 0) return null;
+        return (
+          <div key={g.key}>
+            <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">{g.label}</div>
+            <div className="space-y-2">
+              {groupPeople.map((p) => <PersonCard key={p.id} p={p} />)}
+            </div>
           </div>
         );
       })}
+
+      {people.length === 0 && (
+        <div className="text-center py-12 text-gray-400">No people in the selected groups.</div>
+      )}
     </div>
   );
 }
@@ -1770,10 +2319,7 @@ function Settings({ data, setData, userName, setUserName }) {
       <Card>
         <SH title="Forecast assumptions" />
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">Changes here update all forecasts instantly. Base monthly = stipend only (no tuition). Tuition is calculated separately below based on student status and year. PhD & MSc students have flat stipends. Staff and postdocs escalate annually.</div>
-        <Row label="Postdoc — annual salary increase" desc="Compounded from April 2025 forward" k="postdocInc" step="0.001" min="0" max="0.2" fmt={fp} />
-        <Row label="Postdoc — benefits rate" desc="CPP, EI, health, vacation as % of postdoc salary" k="postdocBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
-        <Row label="Research Staff — annual salary increase" desc="Compounded from April 2025 forward" k="staffInc" step="0.001" min="0" max="0.2" fmt={fp} />
-        <Row label="Research Staff — benefits rate" desc="CPP, EI, health, vacation as % of staff salary" k="staffBenefits" step="0.01" min="0" max="0.5" fmt={fp} />
+
 
       </Card>
       <Card>
@@ -1820,6 +2366,7 @@ export default function Home() {
   const [data, setData] = useState(BLANK);
   const [loaded, setLoaded] = useState(false);
   const [syncState, setSyncState] = useState("loading");
+  const [fcMonths, setFcMonths] = useState(FCN_DEFAULT);
   const [syncMeta, setSyncMeta] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [userName, setUserName] = useState("PI");
@@ -1879,7 +2426,7 @@ export default function Home() {
     try { localStorage.setItem("yachie-gms-local", JSON.stringify(safe(data))); } catch(e) {}
   }, [data, loaded]);
 
-  const fc = useMemo(function() { return forecast(data); }, [data]);
+  const fc = useMemo(function() { return forecast(data, fcMonths); }, [data, fcMonths]);
 
   if (!loaded) {
     return (
@@ -1892,13 +2439,19 @@ export default function Home() {
   const D = safe(data);
   const ag = D.grants.filter((g) => g && g.active);
   const total = ag.reduce((s, g) => s + (+g.totalAward || 0), 0);
-  const TABS = [["dashboard","Dashboard"],["grants","Grants"],["people","People"],["research","Research"],["students","Students"],["settings","Settings"]];
+  const TABS = [["dashboard","Dashboard"],["grants","Grants"],["people","People"],["research","Research"],["students","Lab Members"],["settings","Settings"]];
 
   return (
     <>
       <Head>
-        <title>Yachie Lab — Grant Management</title>
+        <title>{PAGE_TITLE}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#1e3a5f" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Demo Lab GMS" />
+        <link rel="apple-touch-icon" href="/icon-512.png" />
         <style>{`
           @media print {
             body * { visibility: hidden; }
@@ -1909,9 +2462,9 @@ export default function Home() {
         `}</style>
       </Head>
       <div className="min-h-screen bg-gray-50">
-        <div className="bg-blue-900 text-white">
+        <div className="text-white" style={{background: HEADER_COLOR}}>
           <div className="px-5 pt-4">
-            <div className="font-medium text-base">Demo Lab — Grant Management System</div>
+            <div className="font-medium text-base">{LAB_NAME} — {LAB_SUBTITLE}</div>
             <div className="text-blue-300 text-xs mt-1">{ag.length} active grant{ag.length!==1?"s":""} · {D.people.filter((p) => p.active).length} lab members · {f$(total)} total portfolio</div>
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
@@ -1922,13 +2475,21 @@ export default function Home() {
         </div>
         <SyncBar state={syncState} meta={syncMeta} onSync={loadFromServer} onSave={saveToServer} saveError={saveError} />
         <div className="p-4">
-          {tab==="dashboard" && <Dashboard data={data} fc={fc} />}
-          {tab==="grants"    && <Grants    data={data} setData={setData} />}
+          {tab==="dashboard" && <Dashboard data={data} fc={fc} fcMonths={fcMonths} setFcMonths={setFcMonths} />}
+          {tab==="grants"    && <Grants    data={data} setData={setData} fc={fc} />}
           {tab==="people"    && <People    data={data} setData={setData} />}
           {tab==="research"  && <Research  data={data} setData={setData} />}
           {tab==="students"  && <Students  data={data} />}
           {tab==="settings"  && <Settings  data={data} setData={setData} userName={userName} setUserName={setUserName} />}
         </div>
+      </div>
+      <div className="text-center py-3 text-xs text-gray-300 border-t border-gray-100 mt-4">
+        Built with{" "}
+        <a href="https://github.com/madhurangesa/lab-gms" target="_blank" rel="noopener noreferrer"
+          className="text-gray-400 hover:text-gray-600 underline">
+          Lab GMS
+        </a>
+        {" "}· Yachie Lab, UBC SBME · CC BY-NC 4.0
       </div>
     </>
   );
