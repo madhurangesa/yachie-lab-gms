@@ -516,8 +516,9 @@ function ApprovalQueue({ data, setData, userName, grants }) {
 
   async function handleApprove(orderId) {
     setSaving(true);
+    const g = grants.find((g) => g.id === selectedGrant);
     const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : {
-      ...o, status:"approved", grantId:selectedGrant||null, approvedBy:userName, approvedAt:new Date().toISOString(),
+      ...o, status:"approved", grantId:selectedGrant||null, grantCode:g ? (g.code||g.id) : null, approvedBy:userName, approvedAt:new Date().toISOString(),
     })};
     await apiSave(newData, userName); setData(newData); setApprovingId(null); setSelectedGrant(""); setSaving(false);
   }
@@ -596,7 +597,8 @@ function OrdersTab({ data, setData, role, userName, grants }) {
 
   async function saveGrantAssignment(orderId) {
     setSaving(true);
-    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : { ...o, grantId:draftGrant||null }) };
+    const g = grants.find((g) => g.id === draftGrant);
+    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : { ...o, grantId:draftGrant||null, grantCode:g ? (g.code||g.id) : null }) };
     await apiSave(newData, userName); setData(newData); setEditingGrantId(null); setSaving(false);
   }
   function startEditGrant(order) { setEditingGrantId(order.id); setDraftGrant(order.grantId||""); }
