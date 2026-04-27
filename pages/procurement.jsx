@@ -205,8 +205,12 @@ function LoginScreen({ onLogin }) {
   async function fetchNames() {
     setLoadingNames(true);
     try {
-      const json = await apiLoad();
-      setMemberNames((json.data?.settings?.memberNames) || []);
+      const res = await fetch("/api/data?secret=" + API_SECRET);
+      const gmsData = await res.json();
+      const names = (gmsData.data?.people || [])
+        .filter((p) => p.active && p.name)
+        .map((p) => p.name);
+      setMemberNames(names);
     } catch {}
     setLoadingNames(false);
   }
@@ -230,7 +234,7 @@ function LoginScreen({ onLogin }) {
   }
 
   function handleNameSubmit() {
-    const finalName = name === "__custom__" ? customName.trim() : name;
+    const finalName = (name === "__custom__" || memberNames.length === 0) ? customName.trim() : name;
     if (!finalName) { setError("Please enter your name."); return; }
     onLogin(role, finalName);
   }
