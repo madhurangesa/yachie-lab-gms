@@ -110,7 +110,8 @@ async function apiLoadGrants() {
   const r = await fetch("/api/data?secret=" + API_SECRET);
   if (!r.ok) throw new Error("HTTP " + r.status);
   const json = await r.json();
-  return (json.data?.grants || []).filter((g) => g && (g.active === true || g.active === "YES" || g.active === "yes"));
+  // Return all grants — filter by active handled in display
+  return (json.data?.grants || []).filter((g) => g && g.id);
 }
 
 // ── UI primitives ─────────────────────────────────────────────────────────────
