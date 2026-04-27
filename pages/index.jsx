@@ -27,7 +27,7 @@ try { LAB_CONFIG = require("../config.js"); } catch(e) {}
 const LAB_NAME       = LAB_CONFIG.labName       || "Yachie Lab";
 const LAB_SUBTITLE   = LAB_CONFIG.labSubtitle   || "Grant Management System";
 const PAGE_TITLE     = LAB_CONFIG.pageTitle      || "Lab GMS";
-const HEADER_COLOR   = LAB_CONFIG.headerColor    || "#7C6FAE";
+const HEADER_COLOR   = LAB_CONFIG.headerColor    || "#1e3a5f";
 const FC0_CONFIG     = LAB_CONFIG.forecastStart  || "2025-04-01";
 const CATS_CONFIG    = LAB_CONFIG.categories     || null;
 const ROLES_CONFIG   = LAB_CONFIG.roles          || null;
@@ -130,7 +130,7 @@ const ES = {
   intlMScYr12: 1833, intlMScYr2plus: 1833,
   tuitionEscalation: 0.03,
 };
-const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [], fellowships: [] };
+const BLANK = { settings: { ...ES }, grants: [], inflows: [], people: [], research: [], fellowships: [], actuals: [] };
 
 function safe(d) {
   if (!d || typeof d !== "object") return { settings: { ...ES }, grants: [], inflows: [], people: [], research: [], fellowships: [] };
@@ -141,6 +141,7 @@ function safe(d) {
     people:      Array.isArray(d.people)      ? d.people      : [],
     research:    Array.isArray(d.research)    ? d.research    : [],
     fellowships: Array.isArray(d.fellowships) ? d.fellowships : [],
+    actuals:     Array.isArray(d.actuals)     ? d.actuals     : [],
   };
 }
 
@@ -577,7 +578,7 @@ function SyncBar({ state, meta, onSync, onSave, saveError }) {
     : "SAVE FAILED — data is only in this browser";
   return (
     <div>
-      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"")} style={state!=="error" ? {background:"rgba(0,0,0,0.25)", backdropFilter:"blur(4px)", color:"rgba(255,255,255,0.75)"} : {}}>
+      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"bg-blue-950 text-blue-200")}>
         <div className="flex items-center gap-3">
           <span className={"w-2 h-2 rounded-full flex-shrink-0 " + dot} />
           <span className="font-medium">{msg}</span>
@@ -662,9 +663,29 @@ function PerGrantChart({ ag, fc, data }) {
   // Grants to show end lines for: all when viewing all, or just selected
   const grantsToMark = sel === "all" ? ag : ag.filter((g) => g.id === sel);
 
-  const chartData = fc.map((row) => {
+  // Build actuals running balance per grant
+  const D = safe(data);
+  const chartData = fc.map((row, idx) => {
     const r = { label: row.label };
-    ag.forEach((g, gi) => { if (sel === "all" || sel === g.id) r["b"+gi] = row["b"+gi]; });
+    ag.forEach((g, gi) => {
+      if (sel === "all" || sel === g.id) r["b"+gi] = row["b"+gi];
+    });
+    // Add actuals running balance for selected grant
+    if (sel !== "all" && selIdx >= 0) {
+      const g = ag[selIdx];
+      if (g) {
+        // Sum all actuals up to and including this month
+        const fc0 = new Date(FC0 + "T00:00:00Z");
+        const md = addMo(FC0, idx);
+        const monthKey = md.toISOString().slice(0, 7); // YYYY-MM
+        const cumulativeActuals = (D.actuals || [])
+          .filter((a) => a.grantId === g.id && a.month <= monthKey)
+          .reduce((s, a) => s + (+a.amount || 0), 0);
+        if (cumulativeActuals > 0) {
+          r["actualBal"+selIdx] = Math.round(+g.totalAward - cumulativeActuals);
+        }
+      }
+    }
     return r;
   });
 
@@ -730,6 +751,9 @@ function PerGrantChart({ ag, fc, data }) {
             if (!show) return null;
             return <Line key={g.id} type="monotone" dataKey={key} name={g.code} stroke={GC[gi%GC.length]} strokeWidth={sel===g.id?2.5:1.5} dot={false} connectNulls />;
           })}
+          {sel !== "all" && selIdx >= 0 && (
+            <Line type="monotone" dataKey={"actualBal"+selIdx} name="Actual balance" stroke="#276221" strokeWidth={2} strokeDasharray="4 2" dot={false} connectNulls />
+          )}
         </LineChart>
       </ResponsiveContainer>
       {sel !== "all" && selIdx >= 0 && <GrantSummary g={ag[selIdx]} gi={selIdx} fc={fc} />}
@@ -1308,7 +1332,8 @@ function Grants({ data, setData, fc }) {
   const [form, setForm] = useState(null);
   const [infForm, setInfForm] = useState(null);
   const [expandedGrant, setExpandedGrant] = useState(null);
-  const [expandedFYSection, setExpandedFYSection] = useState({}); // {fyKey: "personnel"|"research"|null}
+  const [expandedFYSection, setExpandedFYSection] = useState({});
+  const [actualsGrant, setActualsGrant] = useState(null); // {fyKey: "personnel"|"research"|null}
   const BG = { code:"",funder:"",fullName:"",type:"Operating",startDate:"",endDate:"",totalAward:"",idcRate:0.25,idcExempt:false,notes:"" };
 
   function saveGrant() {
@@ -1471,6 +1496,7 @@ function Grants({ data, setData, fc }) {
                   <td className="py-2 pr-3 text-xs text-gray-400 max-w-[120px] truncate">{g.notes}</td>
                   <td className="py-2 whitespace-nowrap">
                     <Btn onClick={() => setExpandedGrant(expandedGrant===g.id?null:g.id)} v="secondary" sm>{expandedGrant===g.id?"▲ Hide":"▼ FY"}</Btn>
+                    <Btn onClick={() => setActualsGrant(actualsGrant===g.id?null:g.id)} v="secondary" sm>{actualsGrant===g.id?"▲ Actuals":"▼ Actuals"}</Btn>
                     <Btn onClick={() => setForm({...g})} v="ghost" sm>Edit</Btn>
                     <Btn onClick={() => deleteGrant(g.id)} v="danger" sm>Del</Btn>
                   </td>
@@ -1514,6 +1540,109 @@ function Grants({ data, setData, fc }) {
             })}
           </tbody>
         </table>
+        {actualsGrant && (() => {
+          const g = D.grants.find((g) => g.id === actualsGrant);
+          if (!g) return null;
+          // Get last 12 months + next 3 months
+          const months = [];
+          const today = new Date();
+          for (let i = -11; i <= 2; i++) {
+            const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+            months.push(d.toISOString().slice(0, 7));
+          }
+          return (
+            <div className="mt-4 border border-green-200 rounded-lg overflow-hidden">
+              <div className="bg-green-700 text-white px-4 py-2 flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">{g.code} — Actuals vs Forecast</span>
+                  <span className="text-xs text-green-200 ml-3">Enter total spend per month from Workday</span>
+                </div>
+                <button onClick={() => setActualsGrant(null)} className="text-green-200 hover:text-white text-xs px-2 py-0.5 border border-green-500 rounded">Close</button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100 bg-gray-50">
+                    {["Month","Actual spend (Workday)","Forecast spend","Variance","Notes"].map((h) => (
+                      <th key={h} className="py-2 px-3 text-left font-medium whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {months.map((month) => {
+                      const existing = (D.actuals||[]).find((a) => a.grantId === g.id && a.month === month);
+                      const actualAmt = existing ? +existing.amount : null;
+                      // Get forecast spend for this month
+                      const fc0 = new Date(FC0 + "T00:00:00Z");
+                      const gi = D.grants.filter((g) => g.active).findIndex((gr) => gr.id === g.id);
+                      const monthIdx = Math.round((new Date(month + "-01T00:00:00Z") - fc0) / (1000*60*60*24*30.4));
+                      const fcRow = fc && fc[monthIdx];
+                      const fcSpend = fcRow ? (fcRow["p"+gi]||0) + (fcRow["r"+gi]||0) + (fcRow["idc"+gi]||0) : null;
+                      const variance = (actualAmt !== null && fcSpend !== null) ? actualAmt - fcSpend : null;
+                      const isFuture = month > today.toISOString().slice(0,7);
+                      return (
+                        <tr key={month} className={"border-b border-gray-50 " + (isFuture ? "opacity-40" : "")}>
+                          <td className="py-2 px-3 font-medium text-gray-700">{month}</td>
+                          <td className="py-2 px-3">
+                            {!isFuture && (
+                              <input
+                                type="number"
+                                className="border border-gray-200 rounded px-2 py-1 text-sm w-32 focus:outline-none focus:border-green-400"
+                                placeholder="Enter amount"
+                                defaultValue={actualAmt||""}
+                                onBlur={(e) => {
+                                  const val = e.target.value;
+                                  setData((prev) => {
+                                    const s = safe(prev);
+                                    const others = (s.actuals||[]).filter((a) => !(a.grantId===g.id && a.month===month));
+                                    if (val) {
+                                      s.actuals = [...others, { grantId: g.id, month, amount: +val, notes: existing?.notes||"" }];
+                                    } else {
+                                      s.actuals = others;
+                                    }
+                                    return s;
+                                  });
+                                }}
+                              />
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-gray-600">{fcSpend !== null ? f$(Math.round(fcSpend)) : "—"}</td>
+                          <td className="py-2 px-3">
+                            {variance !== null ? (
+                              <span className={"font-medium " + (Math.abs(variance) < 200 ? "text-green-600" : variance > 0 ? "text-red-600" : "text-amber-600")}>
+                                {variance > 0 ? "+" : ""}{f$(Math.round(variance))}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="py-2 px-3">
+                            {!isFuture && (
+                              <input
+                                type="text"
+                                className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none"
+                                placeholder="Optional note"
+                                defaultValue={existing?.notes||""}
+                                onBlur={(e) => {
+                                  const val = e.target.value;
+                                  setData((prev) => {
+                                    const s = safe(prev);
+                                    const idx = (s.actuals||[]).findIndex((a) => a.grantId===g.id && a.month===month);
+                                    if (idx >= 0) s.actuals[idx] = {...s.actuals[idx], notes: val};
+                                    return s;
+                                  });
+                                }}
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t border-gray-100">
+                Variance = Actual minus Forecast. Green = within $200. Red = over forecast. Amber = under forecast. Small variances are normal (payroll timing, rounding).
+              </div>
+            </div>
+          );
+        })()}
         {D.inflows.length > 0 && (
           <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
             <span className="text-xs text-gray-500">
@@ -2447,10 +2576,10 @@ export default function Home() {
         <title>{PAGE_TITLE}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#7C6FAE" />
+        <meta name="theme-color" content="#1e3a5f" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Demo Lab GMS" />
+        <meta name="apple-mobile-web-app-title" content="Yachie Lab GMS" />
         <link rel="apple-touch-icon" href="/icon-512.png" />
         <style>{`
           @media print {
