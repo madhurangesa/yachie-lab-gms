@@ -2632,6 +2632,11 @@ export default function Home() {
                 style={tab!==k ? {color:"rgba(255,255,255,0.75)"} : {}}
                 className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab===k?"bg-gray-50 text-blue-900 font-medium":"hover:bg-black/10")}>{l}</button>
             ))}
+            <a href="/procurement"
+              style={{color:"rgba(255,255,255,0.6)"}}
+              className="px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap hover:bg-black/10 border-l border-white/10 ml-1">
+              Procurement ↗
+            </a>
           </div>
         </div>
         <SyncBar state={syncState} meta={syncMeta} onSync={loadFromServer} onSave={saveToServer} saveError={saveError} />
