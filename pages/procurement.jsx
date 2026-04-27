@@ -691,43 +691,39 @@ function ApprovalQueue({ data, setData, userName, grants }) {
           const vendor = data.vendors.find((v) => v.id === order.vendorId);
           return (
             <div key={order.id} className="bg-white rounded-lg border border-amber-100 p-4">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="font-medium text-gray-800 text-sm">{order.submittedBy}</span>
-                    <span className="text-gray-300">·</span>
-                    <span className="text-xs text-gray-400">{fmtDate(order.submittedAt)}</span>
-                    {vendor && <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{vendor.name}</span>}
-                  </div>
-                  <div className="text-sm text-gray-600 mb-2">
-                    {order.items.map((it, i) => (
-                      <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}</span>
-                    ))}
-                  </div>
-                  {order.notes && <div className="text-xs text-gray-400 italic mb-2">{order.notes}</div>}
-                  <div className="font-semibold text-gray-800 text-sm">{f$(order.totalCAD)} CAD</div>
-                </div>
-                <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
-                  {approvingId === order.id ? (
-                    <>
-                      <select value={selectedGrant}
-                        onChange={(e) => setSelectedGrant(e.target.value)}
-                        className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
-                        <option value="">No grant assigned yet</option>
-                        {grants.map((g) => (
-                          <option key={g.id} value={g.id}>{g.name || g.id}</option>
-                        ))}
-                      </select>
-                      <Btn onClick={() => handleApprove(order.id)} disabled={saving} v="green" sm>Confirm</Btn>
-                      <Btn onClick={cancelApprove} v="secondary" sm>Cancel</Btn>
-                    </>
-                  ) : (
-                    <>
-                      <Btn onClick={() => startApprove(order.id)} v="green" sm>Approve</Btn>
-                      <Btn onClick={() => handleReject(order.id)} disabled={saving} v="red" sm>Reject</Btn>
-                    </>
-                  )}
-                </div>
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="font-medium text-gray-800 text-sm">{order.submittedBy}</span>
+                <span className="text-gray-300">·</span>
+                <span className="text-xs text-gray-400">{fmtDate(order.submittedAt)}</span>
+                {vendor && <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{vendor.name}</span>}
+              </div>
+              <div className="text-sm text-gray-600 mb-1">
+                {order.items.map((it, i) => (
+                  <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}</span>
+                ))}
+              </div>
+              {order.notes && <div className="text-xs text-gray-400 italic mb-1">{order.notes}</div>}
+              <div className="font-semibold text-gray-800 text-sm mb-3">{f$(order.totalCAD)} CAD</div>
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-gray-100">
+                {approvingId === order.id ? (
+                  <>
+                    <select value={selectedGrant}
+                      onChange={(e) => setSelectedGrant(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
+                      <option value="">No grant assigned yet</option>
+                      {grants.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name || g.id}</option>
+                      ))}
+                    </select>
+                    <Btn onClick={() => handleApprove(order.id)} disabled={saving} v="green" sm>Confirm approve</Btn>
+                    <Btn onClick={cancelApprove} v="secondary" sm>Cancel</Btn>
+                  </>
+                ) : (
+                  <>
+                    <Btn onClick={() => startApprove(order.id)} v="green" sm>Approve</Btn>
+                    <Btn onClick={() => handleReject(order.id)} disabled={saving} v="red" sm>Reject</Btn>
+                  </>
+                )}
               </div>
             </div>
           );
