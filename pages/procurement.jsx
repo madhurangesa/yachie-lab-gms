@@ -674,11 +674,17 @@ function OrdersTab({ data, setData, role, userName, grants }) {
 // ── Spend Tab ────────────────────────────────────────────────────────────────
 // Manager: By Grant | By Person toggle with date range
 // Member:  Monthly totals only — no grant info, no per-person breakdown
-function SpendTab({ data, grants, grantsLoaded, role }) {
+function SpendTab({ data, role }) {
   const isManager = role === "manager";
   const [mode,      setMode]      = useState("grant");
   const [fromMonth, setFromMonth] = useState(thisMonth());
   const [toMonth,   setToMonth]   = useState(thisMonth());
+  const [grants,    setGrants]    = useState([]);
+
+  useEffect(function() {
+    if (!isManager) return;
+    apiLoadGrants().then(setGrants).catch(function() {});
+  }, [isManager]);
 
   const availableMonths = useMemo(() => {
     const set = new Set(data.orders.map((o) => o.submittedAt.slice(0, 7)));
@@ -725,14 +731,6 @@ function SpendTab({ data, grants, grantsLoaded, role }) {
       return g ? (g.id) : key;
     }
     return key;
-  }
-
-  if (isManager && !grantsLoaded) {
-    return (
-      <Card className="p-5">
-        <div className="text-center text-gray-400 text-sm py-10">Loading grants...</div>
-      </Card>
-    );
   }
 
   return (
@@ -1207,7 +1205,7 @@ export default function Procurement() {
             </div>
           )}
           {tab === "orders"  && <OrdersTab  data={data} setData={setData} role={role} userName={userName} grants={grants} />}
-          {tab === "spend"   && <SpendTab   data={data} grants={grants} grantsLoaded={grantsLoaded} role={role} />}
+          {tab === "spend"   && <SpendTab   data={data} role={role} />}
           {tab === "vendors" && <VendorsTab data={data} setData={setData} role={role} userName={userName} />}
         </div>
       </div>
