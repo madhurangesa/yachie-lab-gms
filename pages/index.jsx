@@ -680,12 +680,16 @@ function PerGrantChart({ ag, fc, data }) {
         // Only show a point if this exact month has an actual entered
         const thisMonthActual = (D.actuals || []).find((a) => a.grantId === g.id && a.month === monthKey);
         if (thisMonthActual) {
-          // Running balance = forecast balance at month 0 minus cumulative actuals
+          // Running balance = starting balance + inflows received so far - cumulative actuals
           const startBal = fc[0] ? (fc[0]["b"+selIdx] || 0) : +g.totalAward;
           const cumulativeActuals = (D.actuals || [])
             .filter((a) => a.grantId === g.id && a.month <= monthKey)
             .reduce((s, a) => s + (+a.amount || 0), 0);
-          r["actualBal"+selIdx] = Math.round(startBal - cumulativeActuals);
+          // Add inflows that have landed up to and including this month
+          const cumulativeInflows = (D.inflows || [])
+            .filter((i) => i.grantId === g.id && i.date && i.date.slice(0,7) <= monthKey)
+            .reduce((s, i) => s + (+i.amount || 0), 0);
+          r["actualBal"+selIdx] = Math.round(startBal + cumulativeInflows - cumulativeActuals);
         }
       }
     }
@@ -2617,7 +2621,7 @@ export default function Home() {
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
             {TABS.map(([k,l]) => (
-              <button key={k} onClick={() => setTab(k)} className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab===k?"bg-gray-50 text-blue-900 font-medium":"text-blue-200 hover:text-white hover:bg-blue-800")}>{l}</button>
+              <button key={k} onClick={() => setTab(k)} className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab===k?"bg-gray-50 text-blue-900 font-medium":"text-white/70 hover:text-white hover:bg-black/20")}>{l}</button>
             ))}
           </div>
         </div>
