@@ -671,19 +671,21 @@ function PerGrantChart({ ag, fc, data }) {
     ag.forEach((g, gi) => {
       if (sel === "all" || sel === g.id) r["b"+gi] = row["b"+gi];
     });
-    // Add actuals running balance for selected grant
+    // Add actuals running balance — only for months that have actuals entered
     if (sel !== "all" && selIdx >= 0) {
       const g = ag[selIdx];
       if (g) {
-        // Sum all actuals up to and including this month
-        const fc0 = new Date(FC0 + "T00:00:00Z");
         const md = addMo(FC0, idx);
-        const monthKey = md.toISOString().slice(0, 7); // YYYY-MM
-        const cumulativeActuals = (D.actuals || [])
-          .filter((a) => a.grantId === g.id && a.month <= monthKey)
-          .reduce((s, a) => s + (+a.amount || 0), 0);
-        if (cumulativeActuals > 0) {
-          r["actualBal"+selIdx] = Math.round(+g.totalAward - cumulativeActuals);
+        const monthKey = md.toISOString().slice(0, 7);
+        // Only show a point if this exact month has an actual entered
+        const thisMonthActual = (D.actuals || []).find((a) => a.grantId === g.id && a.month === monthKey);
+        if (thisMonthActual) {
+          // Running balance = forecast balance at month 0 minus cumulative actuals
+          const startBal = fc[0] ? (fc[0]["b"+selIdx] || 0) : +g.totalAward;
+          const cumulativeActuals = (D.actuals || [])
+            .filter((a) => a.grantId === g.id && a.month <= monthKey)
+            .reduce((s, a) => s + (+a.amount || 0), 0);
+          r["actualBal"+selIdx] = Math.round(startBal - cumulativeActuals);
         }
       }
     }
