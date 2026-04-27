@@ -671,7 +671,7 @@ function OrdersTab({ data, setData, role, userName, grants }) {
 // ── Spend Tab ────────────────────────────────────────────────────────────────
 // Manager: By Grant | By Person toggle with date range
 // Member:  Monthly totals only — no grant info, no per-person breakdown
-function SpendTab({ data, grants, role }) {
+function SpendTab({ data, grants, grantsLoaded, role }) {
   const isManager = role === "manager";
   const [mode,      setMode]      = useState("grant");
   const [fromMonth, setFromMonth] = useState(thisMonth());
@@ -722,6 +722,14 @@ function SpendTab({ data, grants, role }) {
       return g ? (g.id) : key;
     }
     return key;
+  }
+
+  if (isManager && !grantsLoaded) {
+    return (
+      <Card className="p-5">
+        <div className="text-center text-gray-400 text-sm py-10">Loading grants...</div>
+      </Card>
+    );
   }
 
   return (
@@ -1079,12 +1087,13 @@ function VendorsTab({ data, setData, role, userName }) {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function Procurement() {
-  const [role,     setRole]     = useState(null);
-  const [userName, setUserName] = useState(null);
-  const [data,     setData]     = useState(BLANK);
-  const [grants,   setGrants]   = useState([]);
-  const [loaded,   setLoaded]   = useState(false);
-  const [tab,      setTab]      = useState("queue");
+  const [role,         setRole]         = useState(null);
+  const [userName,     setUserName]     = useState(null);
+  const [data,         setData]         = useState(BLANK);
+  const [grants,       setGrants]       = useState([]);
+  const [grantsLoaded, setGrantsLoaded] = useState(false);
+  const [loaded,       setLoaded]       = useState(false);
+  const [tab,          setTab]          = useState("queue");
 
   // If navigating from the grant dashboard (?from=dashboard), auto-login as manager
   const [autoMgr] = useState(() => {
@@ -1101,7 +1110,11 @@ export default function Procurement() {
   }, []);
 
   async function loadGrantData() {
-    try { setGrants(await apiLoadGrants()); } catch {}
+    try {
+      const g = await apiLoadGrants();
+      setGrants(g);
+    } catch {}
+    setGrantsLoaded(true);
   }
 
   function handleLogin(r, n) { setRole(r); setUserName(n); }
@@ -1177,7 +1190,7 @@ export default function Procurement() {
             </div>
           )}
           {tab === "orders"  && <OrdersTab  data={data} setData={setData} role={role} userName={userName} grants={grants} />}
-          {tab === "spend"   && <SpendTab   data={data} grants={grants} role={role} />}
+          {tab === "spend"   && <SpendTab   data={data} grants={grants} grantsLoaded={grantsLoaded} role={role} />}
           {tab === "vendors" && <VendorsTab data={data} setData={setData} role={role} userName={userName} />}
         </div>
       </div>
