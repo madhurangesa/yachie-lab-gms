@@ -1,5 +1,6 @@
 /**
- * Lab Grant Management System — Core Application
+ * Lab Gra
+nt Management System — Core Application
  * ════════════════════════════════════════════════
  * Original system developed by Madhumitha Rangesa
  * Yachie Lab · UBC School of Biomedical Engineering · Vancouver, Canada
@@ -578,7 +579,7 @@ function SyncBar({ state, meta, onSync, onSave, saveError }) {
     : "SAVE FAILED — data is only in this browser";
   return (
     <div>
-      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"bg-blue-950 text-blue-200")}>
+      <div className={"px-5 py-2 flex items-center justify-between gap-4 text-xs flex-wrap " + (state==="error"?"bg-red-700 text-white":"")} style={state!=="error" ? {background:"rgba(0,0,0,0.25)", backdropFilter:"blur(4px)", color:"rgba(255,255,255,0.75)"} : {}}>
         <div className="flex items-center gap-3">
           <span className={"w-2 h-2 rounded-full flex-shrink-0 " + dot} />
           <span className="font-medium">{msg}</span>
@@ -1331,7 +1332,7 @@ function getFYBreakdown(data, grantId, fc) {
 function ActualsPanel({ grantId, data, fc, setData, onClose }) {
   const D = safe(data);
   const g = D.grants.find((gr) => gr.id === grantId);
-  if (!g) return null;
+  if (!g) { console.log("ActualsPanel: grant not found for id", grantId, "grants:", D.grants.map(g=>g.id)); return null; }
 
   const months = [];
   const today = new Date();
@@ -1340,7 +1341,8 @@ function ActualsPanel({ grantId, data, fc, setData, onClose }) {
     months.push(d.toISOString().slice(0, 7));
   }
 
-  const gi = D.grants.filter((gr) => gr.active).findIndex((gr) => gr.id === grantId);
+  const ag = D.grants.filter((gr) => gr.active !== false);
+  const gi = ag.findIndex((gr) => gr.id === grantId);
   const fc0 = new Date(FC0 + "T00:00:00Z");
   const todayStr = today.toISOString().slice(0, 7);
 
@@ -1619,6 +1621,7 @@ function Grants({ data, setData, fc }) {
             </tbody>
           </table>
         </div>
+      {actualsGrant && <ActualsPanel grantId={actualsGrant} data={data} fc={fc||[]} setData={setData} onClose={() => setActualsGrant(null)} />}
       </Card>
       <Card>
         <SH title="Planned inflows & installments" action={<Btn onClick={() => setInfForm({grantId:"",date:"",amount:"",notes:""})}>+ Add inflow</Btn>} />
@@ -1667,7 +1670,7 @@ function Grants({ data, setData, fc }) {
         )}
       </Card>
 
-      {actualsGrant && <ActualsPanel grantId={actualsGrant} data={data} fc={fc||[]} setData={setData} onClose={() => setActualsGrant(null)} />}
+
     </div>
   );
 }
