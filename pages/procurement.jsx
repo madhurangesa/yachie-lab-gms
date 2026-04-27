@@ -728,7 +728,7 @@ function SpendTab({ data, role }) {
     if (mode === "grant") {
       if (key === "__unassigned__") return "Unassigned";
       const g = grants.find((g) => g.id === key);
-      return g ? (g.id) : key;
+      return g ? (g.code || g.id) : key;
     }
     return key;
   }
@@ -773,7 +773,6 @@ function SpendTab({ data, role }) {
             <div className="text-sm text-gray-500 mb-4">
               Total: <span className="font-semibold text-gray-800">{f$(total)}</span>
               <span className="text-xs text-gray-400 ml-2">({approvedOrders.length} order{approvedOrders.length !== 1 ? "s" : ""})</span>
-              <div className="text-xs text-red-400 mt-1">debug: {grants.length} grants loaded — {grants.map(g => g.id + "=" + g.code).join(", ")}</div>
             </div>
           )}
           <div className="space-y-2.5">
