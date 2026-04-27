@@ -1100,10 +1100,10 @@ export default function Procurement() {
   const [tab,          setTab]          = useState("queue");
 
   // If navigating from the grant dashboard (?from=dashboard), auto-login as manager
-  const [autoMgr] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return new URLSearchParams(window.location.search).get("from") === "dashboard";
-  });
+  const [autoMgr, setAutoMgr] = useState(false);
+  useEffect(function() {
+    setAutoMgr(new URLSearchParams(window.location.search).get("from") === "dashboard");
+  }, []);
 
   const load = useCallback(async function() {
     try {
