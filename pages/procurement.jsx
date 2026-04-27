@@ -1093,6 +1093,7 @@ export default function Procurement() {
   const [grants,       setGrants]       = useState([]);
   const [grantsLoaded, setGrantsLoaded] = useState(false);
   const [loaded,       setLoaded]       = useState(false);
+  const [refreshing,   setRefreshing]   = useState(false);
   const [tab,          setTab]          = useState("queue");
 
   // If navigating from the grant dashboard (?from=dashboard), auto-login as manager
@@ -1118,6 +1119,13 @@ export default function Procurement() {
   }
 
   function handleLogin(r, n) { setRole(r); setUserName(n); }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    await load();
+    if (role === "manager") await loadGrantData();
+    setRefreshing(false);
+  }
 
   // Auto-login as manager if coming from grant dashboard
   useEffect(function() {
@@ -1167,7 +1175,13 @@ export default function Procurement() {
                 {userName} · <span className="capitalize">{role}</span> · Pool: {f$(data.budgetPool.balance)} remaining
               </div>
             </div>
-            {role === "manager" && <a href="/" className="text-blue-300 hover:text-white text-xs transition-colors whitespace-nowrap">← Grant Dashboard</a>}
+            <div className="flex items-center gap-3">
+              <button onClick={handleRefresh} disabled={refreshing}
+                className="text-blue-300 hover:text-white text-xs transition-colors disabled:opacity-50">
+                {refreshing ? "Refreshing..." : "↻ Refresh"}
+              </button>
+              {role === "manager" && <a href="/" className="text-blue-300 hover:text-white text-xs transition-colors whitespace-nowrap">← Grant Dashboard</a>}
+            </div>
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
             {TABS.map(([k, l]) => (
