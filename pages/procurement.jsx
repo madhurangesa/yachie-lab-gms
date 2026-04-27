@@ -4,44 +4,37 @@
  * Yachie Lab · UBC School of Biomedical Engineering · Vancouver, Canada
  * github.com/madhurangesa/lab-gms · 2025
  *
- * Two roles — manager (full access) and member (submit + view).
- * Role is determined client-side by which password is entered.
- * API calls use the lab secret for Upstash authentication.
+ * Managers navigating from the grant dashboard (?from=dashboard) skip
+ * the password screen entirely and go straight to name entry.
+ * Members use the member password and see a restricted view.
  * ════════════════════════════════════════════════
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Head from "next/head";
 
-// ── Role passwords ──────────────────────────────────────────────────────────
-// NEXT_PUBLIC_ vars are visible in the browser — this is UI-level role separation,
-// not cryptographic security. Fine for a lab management tool.
-const MGR_PASS    = process.env.NEXT_PUBLIC_LAB_SECRET    || "yachie-lab-2025";
-const MEMBER_PASS = process.env.NEXT_PUBLIC_MEMBER_SECRET || "lab-member-2025";
-const API_SECRET  = process.env.NEXT_PUBLIC_LAB_SECRET    || "yachie-lab-2025";
+const MEMBER_PASS  = process.env.NEXT_PUBLIC_MEMBER_SECRET || "lab-member-2025";
+const API_SECRET   = process.env.NEXT_PUBLIC_LAB_SECRET    || "yachie-lab-2025";
 const HEADER_COLOR = "#1e3a5f";
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 9);
-const f$ = (n) => (n == null || isNaN(n)) ? "$0" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
+const f$  = (n) => (n == null || isNaN(n)) ? "$0" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
 
 function thisMonth() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
 }
-
 function fmtDate(iso) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
-
 function addDays(n) {
   const d = new Date();
   d.setDate(d.getDate() + n);
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-// ── Auto-categorization keyword map ─────────────────────────────────────────
+// ── Auto-categorization ──────────────────────────────────────────────────────
 const KWMAP = [
   ["Reagents — Enzyme",       ["polymerase","ligase","restriction enzyme","kinase","phosphatase","dnase","rnase","proteinase k","t4 dna","t7 rna"]],
   ["Reagents — Oligo / DNA",  ["oligo","primer","grna","guide rna","sgrna","probe","crna","ssodna"]],
@@ -56,7 +49,6 @@ const KWMAP = [
   ["Services — Core",         ["core facility","flow cytometry","imaging","microscopy","facs","lsrii","confocal","tem","sem"]],
   ["PPE / Safety",            ["glove","mask","goggle","lab coat","waste bag","sharps","biosafety","fume"]],
 ];
-
 function guessCat(name) {
   if (!name) return "General";
   const lo = name.toLowerCase();
@@ -65,7 +57,6 @@ function guessCat(name) {
   }
   return "General";
 }
-
 const ALL_CATS = [
   "Reagents — Enzyme","Reagents — Oligo / DNA","Reagents — Cell Culture","Reagents — Mol Bio",
   "Antibody","Plasticware","Kit","DNA Synthesis","Sequencing","Computing / Cloud",
@@ -73,27 +64,9 @@ const ALL_CATS = [
 ];
 
 // ── Data model ───────────────────────────────────────────────────────────────
-const BLANK_POOL = {
-  monthlyAllocation: 5000,
-  consumablesAllocation: 2000,
-  currentMonth: "",
-  balance: 5000,
-  consumablesBalance: 2000,
-  topUpRequests: [],
-};
-const BLANK_SETTINGS = {
-  autoApproveThreshold: 500,
-  notificationEmail: "",
-  memberNames: [],
-  usdRate: 1.36,
-};
-const BLANK = {
-  orders: [],
-  vendors: [],
-  catalogue: [],
-  budgetPool: { ...BLANK_POOL },
-  settings: { ...BLANK_SETTINGS },
-};
+const BLANK_POOL     = { monthlyAllocation:5000, consumablesAllocation:2000, currentMonth:"", balance:5000, consumablesBalance:2000, topUpRequests:[] };
+const BLANK_SETTINGS = { autoApproveThreshold:500, notificationEmail:"", memberNames:[], usdRate:1.36 };
+const BLANK          = { orders:[], vendors:[], catalogue:[], budgetPool:{...BLANK_POOL}, settings:{...BLANK_SETTINGS} };
 
 function safeData(d) {
   if (!d || typeof d !== "object") return { ...BLANK };
@@ -105,20 +78,11 @@ function safeData(d) {
     settings:   { ...BLANK_SETTINGS, ...(d.settings   || {}) },
   };
 }
-
 function maybeResetPool(data) {
   const tm = thisMonth();
   const pool = data.budgetPool;
   if (pool.currentMonth !== tm) {
-    return {
-      ...data,
-      budgetPool: {
-        ...pool,
-        currentMonth: tm,
-        balance: +pool.monthlyAllocation || 5000,
-        consumablesBalance: +pool.consumablesAllocation || 2000,
-      },
-    };
+    return { ...data, budgetPool:{ ...pool, currentMonth:tm, balance:+pool.monthlyAllocation||5000, consumablesBalance:+pool.consumablesAllocation||2000 } };
   }
   return data;
 }
@@ -129,7 +93,6 @@ async function apiLoad() {
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
-
 async function apiSave(data, savedBy) {
   const r = await fetch("/api/procurement", {
     method: "POST",
@@ -139,7 +102,6 @@ async function apiSave(data, savedBy) {
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
-
 async function apiLoadGrants() {
   const r = await fetch("/api/data?secret=" + API_SECRET);
   if (!r.ok) throw new Error("HTTP " + r.status);
@@ -147,7 +109,7 @@ async function apiLoadGrants() {
   return (json.data?.grants || []).filter((g) => g && g.active);
 }
 
-// ── Shared UI components ─────────────────────────────────────────────────────
+// ── UI primitives ─────────────────────────────────────────────────────────────
 function Btn({ onClick, children, v = "primary", sm, disabled, className = "" }) {
   const base = "inline-flex items-center justify-center rounded font-medium transition-colors focus:outline-none whitespace-nowrap cursor-pointer "
     + (sm ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm");
@@ -156,7 +118,7 @@ function Btn({ onClick, children, v = "primary", sm, disabled, className = "" })
     secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40",
     green:     "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40",
     red:       "bg-red-600 text-white hover:bg-red-700 disabled:opacity-40",
-    ghost:     "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 disabled:opacity-40",
+    ghost:     "bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40",
   };
   return (
     <button onClick={onClick} disabled={disabled}
@@ -165,82 +127,59 @@ function Btn({ onClick, children, v = "primary", sm, disabled, className = "" })
     </button>
   );
 }
-
 function StatusBadge({ status }) {
-  const styles = {
-    pending:        "bg-amber-100 text-amber-800",
-    approved:       "bg-green-100 text-green-800",
-    rejected:       "bg-red-100 text-red-800",
-    "auto-approved":"bg-blue-100 text-blue-700",
-  };
-  const labels = {
-    pending: "Pending", approved: "Approved", rejected: "Rejected", "auto-approved": "Auto-approved",
-  };
-  return (
-    <span className={"px-2 py-0.5 rounded-full text-xs font-medium " + (styles[status] || "bg-gray-100 text-gray-600")}>
-      {labels[status] || status}
-    </span>
-  );
+  const styles = { pending:"bg-amber-100 text-amber-800", approved:"bg-green-100 text-green-800", rejected:"bg-red-100 text-red-800", "auto-approved":"bg-blue-100 text-blue-700" };
+  const labels = { pending:"Pending", approved:"Approved", rejected:"Rejected", "auto-approved":"Auto-approved" };
+  return <span className={"px-2 py-0.5 rounded-full text-xs font-medium " + (styles[status]||"bg-gray-100 text-gray-600")}>{labels[status]||status}</span>;
 }
-
 function SectionHead({ children }) {
   return <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">{children}</div>;
 }
-
 function Card({ children, className = "" }) {
   return <div className={"bg-white rounded-xl border border-gray-200 " + className}>{children}</div>;
 }
 
 // ── Login Screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }) {
-  const [step, setStep] = useState("password");
-  const [pw, setPw] = useState("");
-  const [role, setRole] = useState(null);
-  const [name, setName] = useState("");
+function LoginScreen({ onLogin, autoMgr }) {
+  const [step, setStep]             = useState(autoMgr ? "name" : "password");
+  const [pw, setPw]                 = useState("");
+  const [role, setRole]             = useState(autoMgr ? "manager" : null);
+  const [name, setName]             = useState("");
   const [customName, setCustomName] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError]           = useState("");
   const [memberNames, setMemberNames] = useState([]);
   const [loadingNames, setLoadingNames] = useState(false);
 
-  async function fetchNames() {
+  async function fetchMemberNames() {
     setLoadingNames(true);
     try {
       const res = await fetch("/api/data?secret=" + API_SECRET);
       const gmsData = await res.json();
-      const names = (gmsData.data?.people || [])
-        .filter((p) => p.active && p.name)
-        .map((p) => p.name);
+      const names = (gmsData.data?.people || []).filter((p) => p.active && p.name).map((p) => p.name);
       setMemberNames(names);
     } catch {}
     setLoadingNames(false);
   }
 
   function handlePwSubmit() {
-    if (pw === MGR_PASS) {
-      setRole("manager");
-      setStep("name"); // manager goes straight to text input, no list
-    } else if (pw === MEMBER_PASS) {
+    if (pw === MEMBER_PASS) {
       setRole("member");
-      fetchNames();
+      fetchMemberNames();
       setStep("name");
     } else {
       setError("Incorrect password.");
     }
   }
-
-  function handlePwKey(e) {
-    if (e.key === "Enter") handlePwSubmit();
-  }
+  function handlePwKey(e) { if (e.key === "Enter") handlePwSubmit(); }
 
   function handleNameSubmit() {
-    const finalName = (name === "__custom__" || memberNames.length === 0) ? customName.trim() : name;
+    const finalName = role === "manager"
+      ? customName.trim()
+      : (name === "__custom__" || memberNames.length === 0) ? customName.trim() : name;
     if (!finalName) { setError("Please enter your name."); return; }
     onLogin(role, finalName);
   }
-
-  function handleNameKey(e) {
-    if (e.key === "Enter") handleNameSubmit();
-  }
+  function handleNameKey(e) { if (e.key === "Enter") handleNameSubmit(); }
 
   if (step === "password") {
     return (
@@ -262,7 +201,7 @@ function LoginScreen({ onLogin }) {
           </div>
           <Btn onClick={handlePwSubmit} className="w-full">Continue</Btn>
           <div className="mt-4 text-center">
-            <a href="/" className="text-xs text-gray-400 hover:text-gray-600">← Back to Grant Dashboard</a>
+            <a href="/" className="text-xs text-gray-400 hover:text-gray-600">← Grant Dashboard</a>
           </div>
         </Card>
       </div>
@@ -327,46 +266,28 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-// ── Item name autocomplete input ─────────────────────────────────────────────
+// ── Item autocomplete ────────────────────────────────────────────────────────
 function ItemNameInput({ value, catalogue, onChange, onSelect }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
-
   const matches = useMemo(() => {
     if (!value || value.length < 2) return [];
     const lo = value.toLowerCase();
     return catalogue.filter((c) => c.name.toLowerCase().includes(lo)).slice(0, 7);
   }, [value, catalogue]);
-
   useEffect(() => {
-    function handleOutside(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    }
+    function handleOutside(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); }
     document.addEventListener("mousedown", handleOutside);
     return () => document.removeEventListener("mousedown", handleOutside);
   }, []);
-
-  function handleChange(e) {
-    onChange(e.target.value);
-    setOpen(true);
-  }
-
-  function handleFocus() {
-    setOpen(true);
-  }
-
-  function handleSelect(c) {
-    onSelect(c);
-    setOpen(false);
-  }
-
+  function handleChange(e) { onChange(e.target.value); setOpen(true); }
+  function handleFocus() { setOpen(true); }
+  function handleSelect(c) { onSelect(c); setOpen(false); }
   return (
     <div ref={wrapRef} className="relative">
       <input type="text" value={value} placeholder="Item name"
         className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-        onChange={handleChange}
-        onFocus={handleFocus}
-      />
+        onChange={handleChange} onFocus={handleFocus} />
       {open && matches.length > 0 && (
         <div className="absolute z-50 top-full left-0 right-0 bg-white border border-gray-200 rounded-b shadow-lg max-h-44 overflow-y-auto">
           {matches.map((c) => (
@@ -385,140 +306,77 @@ function ItemNameInput({ value, catalogue, onChange, onSelect }) {
 // ── Order Form ───────────────────────────────────────────────────────────────
 function OrderForm({ data, setData, userName }) {
   const { vendors, catalogue, settings, budgetPool } = data;
-  const usdRate = +settings.usdRate || 1.36;
+  const usdRate   = +settings.usdRate || 1.36;
   const threshold = +settings.autoApproveThreshold || 500;
 
   function emptyItem() {
-    return { id: uid(), name: "", category: "General", fromCat: false, fromCatId: null, supplier: "", catNo: "", unit: "", qty: 1, unitPrice: "", currency: "CAD" };
+    return { id:uid(), name:"", category:"General", fromCat:false, fromCatId:null, supplier:"", catNo:"", unit:"", qty:1, unitPrice:"", currency:"CAD" };
   }
 
-  const [vendorId, setVendorId] = useState("");
-  const [items, setItems] = useState([emptyItem()]);
-  const [notes, setNotes] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [error, setError] = useState("");
+  const [vendorId,    setVendorId]    = useState("");
+  const [items,       setItems]       = useState([emptyItem()]);
+  const [notes,       setNotes]       = useState("");
+  const [submitting,  setSubmitting]  = useState(false);
+  const [success,     setSuccess]     = useState(false);
+  const [error,       setError]       = useState("");
 
   const vendor = vendors.find((v) => v.id === vendorId);
+  const total  = useMemo(() => items.reduce((s, it) => {
+    return s + (+it.unitPrice||0) * (+it.qty||1) * (it.currency === "USD" ? usdRate : 1);
+  }, 0), [items, usdRate]);
 
-  const total = useMemo(() => {
-    return items.reduce((s, it) => {
-      const p = +it.unitPrice || 0;
-      const q = +it.qty || 1;
-      const rate = it.currency === "USD" ? usdRate : 1;
-      return s + p * q * rate;
-    }, 0);
-  }, [items, usdRate]);
-
-  const hasUSD = items.some((it) => it.currency === "USD");
+  const hasUSD       = items.some((it) => it.currency === "USD");
   const freeShipFlag = vendor && +vendor.freeShippingThreshold > 0 && total < +vendor.freeShippingThreshold;
-  const estimatedArrival = (vendor && +vendor.leadTimeDays > 0) ? addDays(+vendor.leadTimeDays) : null;
+  const estArrival   = (vendor && +vendor.leadTimeDays > 0) ? addDays(+vendor.leadTimeDays) : null;
 
   function updateItemField(id, field, val) {
     setItems((prev) => prev.map((it) => {
       if (it.id !== id) return it;
       const next = { ...it, [field]: val };
-      if (field === "name" && !it.fromCat) {
-        next.category = guessCat(val);
-      }
+      if (field === "name" && !it.fromCat) next.category = guessCat(val);
       return next;
     }));
   }
-
   function selectCatalogueItem(itemId, cat) {
-    setItems((prev) => prev.map((it) => {
-      if (it.id !== itemId) return it;
-      return {
-        ...it,
-        name: cat.name,
-        category: cat.category,
-        supplier: cat.supplier || "",
-        catNo: cat.catNo || "",
-        unit: cat.unit || "",
-        fromCat: true,
-        fromCatId: cat.id,
-      };
+    setItems((prev) => prev.map((it) => it.id !== itemId ? it : {
+      ...it, name:cat.name, category:cat.category, supplier:cat.supplier||"", catNo:cat.catNo||"", unit:cat.unit||"", fromCat:true, fromCatId:cat.id,
     }));
   }
-
-  function addItem() {
-    setItems((prev) => [...prev, emptyItem()]);
-  }
-
-  function removeItem(id) {
-    setItems((prev) => prev.filter((it) => it.id !== id));
-  }
+  function addItem()       { setItems((prev) => [...prev, emptyItem()]); }
+  function removeItem(id)  { setItems((prev) => prev.filter((it) => it.id !== id)); }
 
   async function handleSubmit() {
     const filledItems = items.filter((it) => it.name.trim());
     if (!filledItems.length) { setError("Add at least one item."); return; }
-    const missingPrice = filledItems.some((it) => !it.unitPrice && it.unitPrice !== 0);
-    if (missingPrice) { setError("Enter a unit price for each item."); return; }
-
-    setSubmitting(true);
-    setError("");
-
+    if (filledItems.some((it) => !it.unitPrice && it.unitPrice !== 0)) { setError("Enter a unit price for each item."); return; }
+    setSubmitting(true); setError("");
     const isAuto = total < threshold;
-
     const newOrder = {
-      id: uid(),
-      submittedBy: userName,
-      submittedAt: new Date().toISOString(),
+      id:uid(), submittedBy:userName, submittedAt:new Date().toISOString(),
       status: isAuto ? "auto-approved" : "pending",
-      items: filledItems,
-      totalCAD: total,
-      vendorId: vendorId || null,
-      notes: notes.trim(),
-      grantId: null,
-      approvedBy: isAuto ? "Auto" : null,
-      approvedAt: isAuto ? new Date().toISOString() : null,
-      estimatedArrival: estimatedArrival || null,
+      items: filledItems, totalCAD:total, vendorId:vendorId||null, notes:notes.trim(),
+      grantId:null, approvedBy:isAuto?"Auto":null, approvedAt:isAuto?new Date().toISOString():null,
+      estimatedArrival:estArrival||null,
     };
-
-    // Add any new catalogue entries (items not already catalogued)
     const newCatEntries = [];
     for (const it of filledItems) {
       if (!it.fromCatId) {
         const exists = catalogue.find((c) => c.name.toLowerCase() === it.name.toLowerCase().trim());
-        if (!exists) {
-          newCatEntries.push({
-            id: uid(),
-            name: it.name.trim(),
-            category: it.category,
-            categoryConfirmed: false,
-            supplier: it.supplier || "",
-            catNo: it.catNo || "",
-            unit: it.unit || "",
-          });
-        }
+        if (!exists) newCatEntries.push({ id:uid(), name:it.name.trim(), category:it.category, categoryConfirmed:false, supplier:it.supplier||"", catNo:it.catNo||"", unit:it.unit||"" });
       }
     }
-
-    const newData = {
-      ...data,
-      orders: [...data.orders, newOrder],
-      catalogue: [...data.catalogue, ...newCatEntries],
-    };
-
+    const newData = { ...data, orders:[...data.orders, newOrder], catalogue:[...data.catalogue, ...newCatEntries] };
     try {
       await apiSave(newData, userName);
-      setData(newData);
-      setItems([emptyItem()]);
-      setVendorId("");
-      setNotes("");
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 5000);
-    } catch (e) {
-      setError("Save failed: " + e.message);
-    }
+      setData(newData); setItems([emptyItem()]); setVendorId(""); setNotes("");
+      setSuccess(true); setTimeout(() => setSuccess(false), 5000);
+    } catch (e) { setError("Save failed: " + e.message); }
     setSubmitting(false);
   }
 
   return (
     <Card className="p-5">
       <SectionHead>New Order Request</SectionHead>
-
-      {/* Budget status */}
       <div className="flex gap-3 mb-5">
         <div className="bg-blue-50 rounded-lg px-3 py-2 flex-1">
           <div className="text-xs text-blue-400 mb-0.5">Monthly pool</div>
@@ -529,26 +387,17 @@ function OrderForm({ data, setData, userName }) {
           <div className="font-semibold text-emerald-800 text-sm">{f$(budgetPool.consumablesBalance)} remaining</div>
         </div>
       </div>
-
-      {/* Vendor */}
       <div className="mb-4">
         <label className="block text-xs text-gray-500 mb-1">Vendor (optional)</label>
         <div className="flex items-center gap-3">
-          <select value={vendorId}
-            onChange={(e) => setVendorId(e.target.value)}
+          <select value={vendorId} onChange={(e) => setVendorId(e.target.value)}
             className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-xs">
             <option value="">— Select vendor —</option>
-            {vendors.map((v) => (
-              <option key={v.id} value={v.id}>{v.name} ({v.currency})</option>
-            ))}
+            {vendors.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.currency})</option>)}
           </select>
-          {estimatedArrival && (
-            <span className="text-xs text-gray-400">Est. arrival: {estimatedArrival}</span>
-          )}
+          {estArrival && <span className="text-xs text-gray-400">Est. arrival: {estArrival}</span>}
         </div>
       </div>
-
-      {/* Items */}
       <div className="mb-4">
         <label className="block text-xs text-gray-500 mb-2">Items</label>
         <div className="space-y-2">
@@ -557,8 +406,7 @@ function OrderForm({ data, setData, userName }) {
               <div className="flex-1 min-w-40">
                 <ItemNameInput value={it.name} catalogue={catalogue}
                   onChange={(v) => updateItemField(it.id, "name", v)}
-                  onSelect={(c) => selectCatalogueItem(it.id, c)}
-                />
+                  onSelect={(c) => selectCatalogueItem(it.id, c)} />
               </div>
               <input type="text" placeholder="Supplier · CAT#" value={it.supplier + (it.catNo ? " · " + it.catNo : "")}
                 onChange={(e) => updateItemField(it.id, "supplier", e.target.value)}
@@ -569,130 +417,115 @@ function OrderForm({ data, setData, userName }) {
               <input type="number" placeholder="Price" min="0" step="0.01" value={it.unitPrice}
                 onChange={(e) => updateItemField(it.id, "unitPrice", e.target.value)}
                 className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 w-20 text-right" />
-              <select value={it.currency}
-                onChange={(e) => updateItemField(it.id, "currency", e.target.value)}
+              <select value={it.currency} onChange={(e) => updateItemField(it.id, "currency", e.target.value)}
                 className="border border-gray-300 rounded px-1.5 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 w-16">
-                <option>CAD</option>
-                <option>USD</option>
+                <option>CAD</option><option>USD</option>
               </select>
               {items.length > 1 && (
-                <button onClick={() => removeItem(it.id)}
-                  className="text-gray-300 hover:text-red-400 text-lg leading-none px-1">×</button>
+                <button onClick={() => removeItem(it.id)} className="text-gray-300 hover:text-red-400 text-lg leading-none px-1">×</button>
               )}
             </div>
           ))}
         </div>
         {items[0]?.name && !items[0]?.fromCat && (
-          <div className="text-xs text-gray-400 mt-1.5 italic">
-            Category guess: <strong className="text-gray-500">{items[0].category}</strong>
-          </div>
+          <div className="text-xs text-gray-400 mt-1.5 italic">Category guess: <strong className="text-gray-500">{items[0].category}</strong></div>
         )}
-        <button onClick={addItem} className="mt-2 text-xs text-blue-500 hover:text-blue-700">
-          + Add item
-        </button>
+        <button onClick={addItem} className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add item</button>
       </div>
-
-      {/* Notes */}
       <div className="mb-4">
         <label className="block text-xs text-gray-500 mb-1">Notes</label>
-        <textarea rows={2} value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+        <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
           placeholder="Context, urgency, link to protocol..."
           className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none" />
       </div>
-
-      {/* Flags + total */}
       {total > 0 && (
         <div className="mb-4 space-y-1.5">
           <div className="flex items-center gap-2 text-sm flex-wrap">
             <span className="text-gray-500">Estimated total:</span>
             <span className="font-semibold text-gray-800">{f$(total)} CAD</span>
-            {total >= threshold ? (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Requires manager approval</span>
-            ) : (
-              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Will auto-approve (under {f$(threshold)})</span>
-            )}
+            {total >= threshold
+              ? <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Requires manager approval</span>
+              : <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Will auto-approve (under {f$(threshold)})</span>}
           </div>
-          {hasUSD && (
-            <div className="text-xs text-orange-500">
-              ⚠ Contains USD items — converted at {usdRate} CAD/USD
-            </div>
-          )}
+          {hasUSD && <div className="text-xs text-orange-500">⚠ Contains USD items — converted at {usdRate} CAD/USD</div>}
           {freeShipFlag && (
             <div className="text-xs text-purple-700 bg-purple-50 rounded px-2.5 py-1.5">
-              💡 Order is under {f$(+vendor.freeShippingThreshold)} — consider batching to reach free shipping threshold
+              💡 Under {f$(+vendor.freeShippingThreshold)} — consider batching to reach free shipping threshold
             </div>
           )}
         </div>
       )}
-
-      {success && (
-        <div className="mb-3 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">
-          Order submitted. {total >= threshold ? "Waiting for manager approval." : "Auto-approved."}
-        </div>
-      )}
+      {success && <div className="mb-3 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-3 py-2">Order submitted. {total >= threshold ? "Waiting for manager approval." : "Auto-approved."}</div>}
       {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
-
-      <Btn onClick={handleSubmit} disabled={submitting}>
-        {submitting ? "Submitting..." : "Submit Order"}
-      </Btn>
+      <Btn onClick={handleSubmit} disabled={submitting}>{submitting ? "Submitting..." : "Submit Order"}</Btn>
     </Card>
   );
 }
 
-// ── Approval Queue (manager) ──────────────────────────────────────────────────
+// ── Top-up Request (members only, shown in Queue tab) ────────────────────────
+function TopUpRequest({ data, setData, userName }) {
+  const [amount,  setAmount]  = useState("");
+  const [reason,  setReason]  = useState("");
+  const [saving,  setSaving]  = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  async function handleSubmit() {
+    if (!amount) return;
+    setSaving(true);
+    const req = { id:uid(), requestedBy:userName, amount:+amount, reason:reason.trim(), requestedAt:new Date().toISOString(), status:"pending" };
+    const newData = { ...data, budgetPool:{ ...data.budgetPool, topUpRequests:[...(data.budgetPool.topUpRequests||[]), req] } };
+    await apiSave(newData, userName);
+    setData(newData); setAmount(""); setReason("");
+    setSaving(false); setSuccess(true); setTimeout(() => setSuccess(false), 4000);
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHead>Request Budget Top-up</SectionHead>
+      <div className="flex gap-2 items-end flex-wrap">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Amount ($)</label>
+          <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
+            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+        <div className="flex-1 min-w-40">
+          <label className="block text-xs text-gray-500 mb-1">Reason</label>
+          <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Urgent reagent restock"
+            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+        </div>
+        <Btn onClick={handleSubmit} disabled={saving || !amount}>Request top-up</Btn>
+      </div>
+      {success && <div className="text-xs text-emerald-600 mt-2">Top-up request sent to manager.</div>}
+    </Card>
+  );
+}
+
+// ── Approval Queue (manager only) ────────────────────────────────────────────
 function ApprovalQueue({ data, setData, userName, grants }) {
   const pending = data.orders.filter((o) => o.status === "pending");
-  const [approvingId, setApprovingId] = useState(null);
-  const [selectedGrant, setSelectedGrant] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [approvingId,    setApprovingId]    = useState(null);
+  const [selectedGrant, setSelectedGrant]  = useState("");
+  const [saving,        setSaving]         = useState(false);
 
   if (pending.length === 0) return null;
 
   async function handleApprove(orderId) {
     setSaving(true);
-    const newData = {
-      ...data,
-      orders: data.orders.map((o) => o.id !== orderId ? o : {
-        ...o,
-        status: "approved",
-        grantId: selectedGrant || null,
-        approvedBy: userName,
-        approvedAt: new Date().toISOString(),
-      }),
-    };
-    await apiSave(newData, userName);
-    setData(newData);
-    setApprovingId(null);
-    setSelectedGrant("");
-    setSaving(false);
+    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : {
+      ...o, status:"approved", grantId:selectedGrant||null, approvedBy:userName, approvedAt:new Date().toISOString(),
+    })};
+    await apiSave(newData, userName); setData(newData); setApprovingId(null); setSelectedGrant(""); setSaving(false);
   }
-
   async function handleReject(orderId) {
     setSaving(true);
-    const newData = {
-      ...data,
-      orders: data.orders.map((o) => o.id !== orderId ? o : {
-        ...o,
-        status: "rejected",
-        approvedBy: userName,
-        approvedAt: new Date().toISOString(),
-      }),
-    };
-    await apiSave(newData, userName);
-    setData(newData);
-    setSaving(false);
+    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : {
+      ...o, status:"rejected", approvedBy:userName, approvedAt:new Date().toISOString(),
+    })};
+    await apiSave(newData, userName); setData(newData); setSaving(false);
   }
-
-  function startApprove(orderId) {
-    setApprovingId(orderId);
-    setSelectedGrant("");
-  }
-
-  function cancelApprove() {
-    setApprovingId(null);
-    setSelectedGrant("");
-  }
+  function startApprove(orderId) { setApprovingId(orderId); setSelectedGrant(""); }
+  function cancelApprove()       { setApprovingId(null); setSelectedGrant(""); }
 
   return (
     <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 mb-4">
@@ -709,22 +542,17 @@ function ApprovalQueue({ data, setData, userName, grants }) {
                 {vendor && <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{vendor.name}</span>}
               </div>
               <div className="text-sm text-gray-600 mb-1">
-                {order.items.map((it, i) => (
-                  <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}</span>
-                ))}
+                {order.items.map((it, i) => <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}</span>)}
               </div>
               {order.notes && <div className="text-xs text-gray-400 italic mb-1">{order.notes}</div>}
               <div className="font-semibold text-gray-800 text-sm mb-3">{f$(order.totalCAD)} CAD</div>
               <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-gray-100">
                 {approvingId === order.id ? (
                   <>
-                    <select value={selectedGrant}
-                      onChange={(e) => setSelectedGrant(e.target.value)}
+                    <select value={selectedGrant} onChange={(e) => setSelectedGrant(e.target.value)}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
                       <option value="">No grant assigned yet</option>
-                      {grants.map((g) => (
-                        <option key={g.id} value={g.id}>{g.name || g.id}</option>
-                      ))}
+                      {grants.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
                     </select>
                     <Btn onClick={() => handleApprove(order.id)} disabled={saving} v="green" sm>Confirm approve</Btn>
                     <Btn onClick={cancelApprove} v="secondary" sm>Cancel</Btn>
@@ -746,10 +574,10 @@ function ApprovalQueue({ data, setData, userName, grants }) {
 
 // ── Orders Tab ───────────────────────────────────────────────────────────────
 function OrdersTab({ data, setData, role, userName, grants }) {
-  const [month, setMonth] = useState(thisMonth());
+  const [month,         setMonth]         = useState(thisMonth());
   const [editingGrantId, setEditingGrantId] = useState(null);
-  const [draftGrant, setDraftGrant] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [draftGrant,    setDraftGrant]    = useState("");
+  const [saving,        setSaving]        = useState(false);
 
   const availableMonths = useMemo(() => {
     const set = new Set(data.orders.map((o) => o.submittedAt.slice(0, 7)));
@@ -758,40 +586,24 @@ function OrdersTab({ data, setData, role, userName, grants }) {
   }, [data.orders]);
 
   const filtered = useMemo(() => {
-    return data.orders
-      .filter((o) => o.submittedAt.slice(0, 7) === month)
+    return data.orders.filter((o) => o.submittedAt.slice(0, 7) === month)
       .sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
   }, [data.orders, month]);
 
   async function saveGrantAssignment(orderId) {
     setSaving(true);
-    const newData = {
-      ...data,
-      orders: data.orders.map((o) => o.id !== orderId ? o : { ...o, grantId: draftGrant || null }),
-    };
-    await apiSave(newData, userName);
-    setData(newData);
-    setEditingGrantId(null);
-    setSaving(false);
+    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : { ...o, grantId:draftGrant||null }) };
+    await apiSave(newData, userName); setData(newData); setEditingGrantId(null); setSaving(false);
   }
-
-  function startEditGrant(order) {
-    setEditingGrantId(order.id);
-    setDraftGrant(order.grantId || "");
-  }
-
-  function cancelEditGrant() {
-    setEditingGrantId(null);
-    setDraftGrant("");
-  }
+  function startEditGrant(order) { setEditingGrantId(order.id); setDraftGrant(order.grantId||""); }
+  function cancelEditGrant()     { setEditingGrantId(null); setDraftGrant(""); }
 
   return (
     <Card>
       <div className="p-4 border-b border-gray-100 flex items-center gap-3">
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Orders</span>
         <div className="ml-auto">
-          <select value={month}
-            onChange={(e) => setMonth(e.target.value)}
+          <select value={month} onChange={(e) => setMonth(e.target.value)}
             className="border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 focus:outline-none">
             {availableMonths.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
@@ -803,54 +615,45 @@ function OrdersTab({ data, setData, role, userName, grants }) {
         <div className="divide-y divide-gray-50">
           {filtered.map((order) => {
             const vendor = data.vendors.find((v) => v.id === order.vendorId);
-            const grant = grants.find((g) => g.id === order.grantId);
+            const grant  = grants.find((g) => g.id === order.grantId);
             return (
               <div key={order.id} className="p-4">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <span className="font-medium text-sm text-gray-800">{order.submittedBy}</span>
-                      <span className="text-gray-300 text-xs">·</span>
-                      <span className="text-xs text-gray-400">{fmtDate(order.submittedAt)}</span>
-                      {vendor && <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{vendor.name}</span>}
-                      <StatusBadge status={order.status} />
-                    </div>
-                    <div className="text-sm text-gray-600 mb-1.5">
-                      {order.items.map((it, i) => (
-                        <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}
-                          {it.unitPrice ? <span className="text-gray-400"> ({f$(+it.unitPrice * +it.qty)} {it.currency})</span> : null}
-                        </span>
-                      ))}
-                    </div>
-                    {order.notes && <div className="text-xs text-gray-400 italic mb-1.5">{order.notes}</div>}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="font-semibold text-gray-800 text-sm">{f$(order.totalCAD)}</span>
-                      {role === "manager" ? (
-                        editingGrantId === order.id ? (
-                          <div className="flex items-center gap-2">
-                            <select value={draftGrant}
-                              onChange={(e) => setDraftGrant(e.target.value)}
-                              className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none">
-                              <option value="">No grant</option>
-                              {grants.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
-                            </select>
-                            <Btn onClick={() => saveGrantAssignment(order.id)} disabled={saving} v="green" sm>Save</Btn>
-                            <Btn onClick={cancelEditGrant} v="secondary" sm>Cancel</Btn>
-                          </div>
-                        ) : (
-                          <button onClick={() => startEditGrant(order)}
-                            className="text-xs text-blue-500 hover:text-blue-700 underline underline-offset-2">
-                            {grant ? (grant.name || grant.id) : "Assign grant →"}
-                          </button>
-                        )
-                      ) : (
-                        grant && <span className="text-xs text-gray-400">{grant.name || grant.id}</span>
-                      )}
-                      {order.estimatedArrival && (
-                        <span className="text-xs text-gray-400">Est. {order.estimatedArrival}</span>
-                      )}
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                  <span className="font-medium text-sm text-gray-800">{order.submittedBy}</span>
+                  <span className="text-gray-300 text-xs">·</span>
+                  <span className="text-xs text-gray-400">{fmtDate(order.submittedAt)}</span>
+                  {vendor && <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{vendor.name}</span>}
+                  <StatusBadge status={order.status} />
+                </div>
+                <div className="text-sm text-gray-600 mb-1.5">
+                  {order.items.map((it, i) => (
+                    <span key={i}>{i > 0 && ", "}{it.qty > 1 ? it.qty + "× " : ""}{it.name}
+                      {it.unitPrice ? <span className="text-gray-400"> ({f$(+it.unitPrice * +it.qty)} {it.currency})</span> : null}
+                    </span>
+                  ))}
+                </div>
+                {order.notes && <div className="text-xs text-gray-400 italic mb-1.5">{order.notes}</div>}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="font-semibold text-gray-800 text-sm">{f$(order.totalCAD)}</span>
+                  {role === "manager" ? (
+                    editingGrantId === order.id ? (
+                      <div className="flex items-center gap-2">
+                        <select value={draftGrant} onChange={(e) => setDraftGrant(e.target.value)}
+                          className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none">
+                          <option value="">No grant</option>
+                          {grants.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+                        </select>
+                        <Btn onClick={() => saveGrantAssignment(order.id)} disabled={saving} v="green" sm>Save</Btn>
+                        <Btn onClick={cancelEditGrant} v="secondary" sm>Cancel</Btn>
+                      </div>
+                    ) : (
+                      <button onClick={() => startEditGrant(order)}
+                        className="text-xs text-blue-600 hover:text-blue-800 underline underline-offset-2">
+                        {grant ? (grant.name || grant.id) : "Assign grant →"}
+                      </button>
+                    )
+                  ) : null}
+                  {order.estimatedArrival && <span className="text-xs text-gray-400">Est. {order.estimatedArrival}</span>}
                 </div>
               </div>
             );
@@ -862,10 +665,13 @@ function OrdersTab({ data, setData, role, userName, grants }) {
 }
 
 // ── Spend Tab ────────────────────────────────────────────────────────────────
-function SpendTab({ data, grants }) {
-  const [mode, setMode] = useState("grant");
+// Manager: By Grant | By Person toggle with date range
+// Member:  Monthly totals only — no grant info, no per-person breakdown
+function SpendTab({ data, grants, role }) {
+  const isManager = role === "manager";
+  const [mode,      setMode]      = useState("grant");
   const [fromMonth, setFromMonth] = useState(thisMonth());
-  const [toMonth, setToMonth] = useState(thisMonth());
+  const [toMonth,   setToMonth]   = useState(thisMonth());
 
   const availableMonths = useMemo(() => {
     const set = new Set(data.orders.map((o) => o.submittedAt.slice(0, 7)));
@@ -880,7 +686,8 @@ function SpendTab({ data, grants }) {
     });
   }, [data.orders, fromMonth, toMonth]);
 
-  const rows = useMemo(() => {
+  // Manager rows: grouped by grant or person
+  const managerRows = useMemo(() => {
     const map = {};
     for (const o of approvedOrders) {
       const key = mode === "grant" ? (o.grantId || "__unassigned__") : o.submittedBy;
@@ -889,10 +696,22 @@ function SpendTab({ data, grants }) {
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [approvedOrders, mode]);
 
-  const total = approvedOrders.reduce((s, o) => s + (+o.totalCAD || 0), 0);
+  // Member rows: monthly totals only
+  const memberRows = useMemo(() => {
+    const map = {};
+    for (const o of data.orders.filter((o) => o.status === "approved" || o.status === "auto-approved")) {
+      const m = o.submittedAt.slice(0, 7);
+      map[m] = (map[m] || 0) + (+o.totalCAD || 0);
+    }
+    return Object.entries(map).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
+  }, [data.orders]);
+
+  const rows   = isManager ? managerRows : memberRows;
   const maxVal = rows.length ? rows[0][1] : 1;
+  const total  = approvedOrders.reduce((s, o) => s + (+o.totalCAD || 0), 0);
 
   function rowLabel(key) {
+    if (!isManager) return key;
     if (mode === "grant") {
       if (key === "__unassigned__") return "Unassigned";
       const g = grants.find((g) => g.id === key);
@@ -904,49 +723,51 @@ function SpendTab({ data, grants }) {
   return (
     <Card className="p-5">
       <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Spend Tracker</span>
-        <div className="ml-auto flex items-center gap-3 flex-wrap">
-          <div className="flex rounded-lg overflow-hidden border border-gray-200">
-            <button onClick={() => setMode("grant")}
-              className={"px-3 py-1.5 text-xs font-medium transition-colors " + (mode === "grant" ? "bg-blue-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>
-              By Grant
-            </button>
-            <button onClick={() => setMode("person")}
-              className={"px-3 py-1.5 text-xs font-medium border-l border-gray-200 transition-colors " + (mode === "person" ? "bg-blue-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>
-              By Person
-            </button>
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+          {isManager ? "Spend Tracker" : "Lab Spend by Month"}
+        </span>
+        {isManager && (
+          <div className="ml-auto flex items-center gap-3 flex-wrap">
+            <div className="flex rounded-lg overflow-hidden border border-gray-200">
+              <button onClick={() => setMode("grant")}
+                className={"px-3 py-1.5 text-xs font-medium transition-colors " + (mode === "grant" ? "bg-blue-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>
+                By Grant
+              </button>
+              <button onClick={() => setMode("person")}
+                className={"px-3 py-1.5 text-xs font-medium border-l border-gray-200 transition-colors " + (mode === "person" ? "bg-blue-700 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}>
+                By Person
+              </button>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+              <select value={fromMonth} onChange={(e) => setFromMonth(e.target.value)}
+                className="border border-gray-200 rounded px-2 py-1 focus:outline-none">
+                {availableMonths.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <span className="text-gray-400">to</span>
+              <select value={toMonth} onChange={(e) => setToMonth(e.target.value)}
+                className="border border-gray-200 rounded px-2 py-1 focus:outline-none">
+                {availableMonths.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 text-xs text-gray-500">
-            <select value={fromMonth}
-              onChange={(e) => setFromMonth(e.target.value)}
-              className="border border-gray-200 rounded px-2 py-1 focus:outline-none">
-              {availableMonths.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <span className="text-gray-400">to</span>
-            <select value={toMonth}
-              onChange={(e) => setToMonth(e.target.value)}
-              className="border border-gray-200 rounded px-2 py-1 focus:outline-none">
-              {availableMonths.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-        </div>
+        )}
       </div>
-
       {rows.length === 0 ? (
-        <div className="text-center text-gray-400 text-sm py-10">No approved orders in this range</div>
+        <div className="text-center text-gray-400 text-sm py-10">No approved orders yet</div>
       ) : (
         <div>
-          <div className="text-sm text-gray-500 mb-4">
-            Total: <span className="font-semibold text-gray-800">{f$(total)}</span>
-            <span className="text-xs text-gray-400 ml-2">({approvedOrders.length} order{approvedOrders.length !== 1 ? "s" : ""})</span>
-          </div>
+          {isManager && (
+            <div className="text-sm text-gray-500 mb-4">
+              Total: <span className="font-semibold text-gray-800">{f$(total)}</span>
+              <span className="text-xs text-gray-400 ml-2">({approvedOrders.length} order{approvedOrders.length !== 1 ? "s" : ""})</span>
+            </div>
+          )}
           <div className="space-y-2.5">
             {rows.map(([key, val]) => (
               <div key={key} className="flex items-center gap-3">
                 <div className="w-40 text-xs text-gray-600 truncate shrink-0 font-medium">{rowLabel(key)}</div>
                 <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
-                  <div className="bg-blue-500 h-3 rounded-full transition-all"
-                    style={{ width: (val / maxVal * 100) + "%" }} />
+                  <div className="bg-blue-500 h-3 rounded-full transition-all" style={{ width:(val/maxVal*100)+"%" }} />
                 </div>
                 <div className="text-xs font-semibold text-gray-700 w-20 text-right shrink-0">{f$(val)}</div>
               </div>
@@ -966,63 +787,32 @@ function VendorsTab({ data, setData, role, userName }) {
   const [saving, setSaving] = useState(false);
   const unconfirmed = data.catalogue.filter((c) => !c.categoryConfirmed);
 
-  // Vendor form
-  function emptyVendorForm() {
-    return { id: null, name: "", currency: "CAD", taxRate: "", freeShippingThreshold: "", leadTimeDays: "", notes: "" };
-  }
+  function emptyVendorForm() { return { id:null, name:"", currency:"CAD", taxRate:"", freeShippingThreshold:"", leadTimeDays:"", notes:"" }; }
   const [vf, setVf] = useState(emptyVendorForm());
 
-  function openNewVendor() {
-    setVf(emptyVendorForm());
-    setEditingVendor("new");
-  }
-
-  function openEditVendor(v) {
-    setVf({ ...emptyVendorForm(), ...v });
-    setEditingVendor(v);
-  }
-
-  function cancelVendorEdit() {
-    setEditingVendor(null);
-  }
+  function openNewVendor()    { setVf(emptyVendorForm()); setEditingVendor("new"); }
+  function openEditVendor(v)  { setVf({ ...emptyVendorForm(), ...v }); setEditingVendor(v); }
+  function cancelVendorEdit() { setEditingVendor(null); }
 
   async function saveVendor() {
     setSaving(true);
-    const v = { ...vf, id: vf.id || uid() };
-    const vendors = editingVendor === "new"
-      ? [...data.vendors, v]
-      : data.vendors.map((x) => x.id === v.id ? v : x);
-    const newData = { ...data, vendors };
-    await apiSave(newData, userName);
-    setData(newData);
-    setEditingVendor(null);
-    setSaving(false);
+    const v = { ...vf, id:vf.id||uid() };
+    const vendors = editingVendor === "new" ? [...data.vendors, v] : data.vendors.map((x) => x.id === v.id ? v : x);
+    await apiSave({ ...data, vendors }, userName); setData({ ...data, vendors }); setEditingVendor(null); setSaving(false);
   }
-
   async function deleteVendor(id) {
     if (!confirm("Remove this vendor?")) return;
     setSaving(true);
-    const newData = { ...data, vendors: data.vendors.filter((v) => v.id !== id) };
-    await apiSave(newData, userName);
-    setData(newData);
-    setSaving(false);
+    const newData = { ...data, vendors:data.vendors.filter((v) => v.id !== id) };
+    await apiSave(newData, userName); setData(newData); setSaving(false);
   }
-
   async function confirmCategory(catId, newCat) {
-    const newData = {
-      ...data,
-      catalogue: data.catalogue.map((c) => c.id !== catId ? c : { ...c, category: newCat, categoryConfirmed: true }),
-    };
-    await apiSave(newData, userName);
-    setData(newData);
+    const newData = { ...data, catalogue:data.catalogue.map((c) => c.id !== catId ? c : { ...c, category:newCat, categoryConfirmed:true }) };
+    await apiSave(newData, userName); setData(newData);
   }
 
-  // Settings
   const [sf, setSf] = useState({ ...data.settings });
-  const [pf, setPf] = useState({
-    monthlyAllocation: data.budgetPool.monthlyAllocation,
-    consumablesAllocation: data.budgetPool.consumablesAllocation,
-  });
+  const [pf, setPf] = useState({ monthlyAllocation:data.budgetPool.monthlyAllocation, consumablesAllocation:data.budgetPool.consumablesAllocation });
   const [settingsSaved, setSettingsSaved] = useState(false);
 
   async function saveSettings() {
@@ -1030,69 +820,33 @@ function VendorsTab({ data, setData, role, userName }) {
     const newData = {
       ...data,
       settings: { ...data.settings, ...sf },
-      budgetPool: {
-        ...data.budgetPool,
-        monthlyAllocation: +pf.monthlyAllocation || 5000,
-        consumablesAllocation: +pf.consumablesAllocation || 2000,
-      },
+      budgetPool: { ...data.budgetPool, monthlyAllocation:+pf.monthlyAllocation||5000, consumablesAllocation:+pf.consumablesAllocation||2000 },
     };
-    await apiSave(newData, userName);
-    setData(newData);
-    setSettingsSaved(true);
-    setTimeout(() => setSettingsSaved(false), 3000);
-    setSaving(false);
+    await apiSave(newData, userName); setData(newData);
+    setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 3000); setSaving(false);
   }
 
-  // Top-up
-  const [tuAmount, setTuAmount] = useState("");
-  const [tuReason, setTuReason] = useState("");
-  const [tuSaving, setTuSaving] = useState(false);
-  const [tuSuccess, setTuSuccess] = useState(false);
-
-  async function submitTopUp() {
-    if (!tuAmount) return;
-    setTuSaving(true);
-    const req = {
-      id: uid(), requestedBy: userName, amount: +tuAmount,
-      reason: tuReason.trim(), requestedAt: new Date().toISOString(), status: "pending",
-    };
-    const newData = {
-      ...data,
-      budgetPool: { ...data.budgetPool, topUpRequests: [...(data.budgetPool.topUpRequests || []), req] },
-    };
-    await apiSave(newData, userName);
-    setData(newData);
-    setTuAmount("");
-    setTuReason("");
-    setTuSaving(false);
-    setTuSuccess(true);
-    setTimeout(() => setTuSuccess(false), 4000);
-  }
+  const pendingTopUps = (data.budgetPool.topUpRequests || []).filter((r) => r.status === "pending");
 
   async function resolveTopUp(reqId, approve) {
     setSaving(true);
     const req = (data.budgetPool.topUpRequests || []).find((r) => r.id === reqId);
-    const newBalance = approve && req ? data.budgetPool.balance + (+req.amount || 0) : data.budgetPool.balance;
+    const newBalance = approve && req ? data.budgetPool.balance + (+req.amount||0) : data.budgetPool.balance;
     const newData = {
       ...data,
       budgetPool: {
         ...data.budgetPool,
         balance: newBalance,
-        topUpRequests: (data.budgetPool.topUpRequests || []).map((r) =>
-          r.id !== reqId ? r : { ...r, status: approve ? "approved" : "rejected" }
-        ),
+        topUpRequests: (data.budgetPool.topUpRequests||[]).map((r) => r.id !== reqId ? r : { ...r, status:approve?"approved":"rejected" }),
       },
     };
-    await apiSave(newData, userName);
-    setData(newData);
-    setSaving(false);
+    await apiSave(newData, userName); setData(newData); setSaving(false);
   }
 
-  const pendingTopUps = (data.budgetPool.topUpRequests || []).filter((r) => r.status === "pending");
   const sectionTabs = [
-    ["vendors", "Vendors"],
+    ["vendors",   "Vendors"],
     ["catalogue", "Catalogue" + (unconfirmed.length > 0 && isManager ? ` (${unconfirmed.length})` : "")],
-    ["settings", "Settings"],
+    ...(isManager ? [["settings", "Settings"]] : []),
   ];
 
   return (
@@ -1100,67 +854,57 @@ function VendorsTab({ data, setData, role, userName }) {
       <div className="flex gap-1 mb-4 border-b border-gray-100 pb-2">
         {sectionTabs.map(([k, l]) => (
           <button key={k} onClick={() => setSection(k)}
-            className={"px-3 py-1.5 text-sm rounded-md transition-colors "
-              + (section === k ? "bg-blue-700 text-white font-medium" : "text-gray-500 hover:bg-gray-100")}>
+            className={"px-3 py-1.5 text-sm rounded-md transition-colors " + (section === k ? "bg-blue-700 text-white font-medium" : "bg-gray-100 text-gray-500 hover:bg-gray-200")}>
             {l}
           </button>
         ))}
       </div>
 
-      {/* Vendors */}
       {section === "vendors" && (
         <div>
-          {isManager && (
-            <div className="mb-4">
-              <Btn onClick={openNewVendor} sm>+ Add vendor</Btn>
-            </div>
-          )}
+          {isManager && <div className="mb-4"><Btn onClick={openNewVendor} sm>+ Add vendor</Btn></div>}
           {editingVendor && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5">
               <SectionHead>{editingVendor === "new" ? "New Vendor" : "Edit Vendor"}</SectionHead>
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="col-span-2 sm:col-span-1">
                   <label className="block text-xs text-gray-500 mb-1">Name</label>
-                  <input type="text" value={vf.name}
-                    onChange={(e) => setVf((p) => ({ ...p, name: e.target.value }))}
+                  <input type="text" value={vf.name} onChange={(e) => setVf((p) => ({...p, name:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Currency</label>
-                  <select value={vf.currency}
-                    onChange={(e) => setVf((p) => ({ ...p, currency: e.target.value }))}
+                  <select value={vf.currency} onChange={(e) => setVf((p) => ({...p, currency:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    <option>CAD</option>
-                    <option>USD</option>
+                    <option>CAD</option><option>USD</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Tax rate (0.05 = 5%)</label>
                   <input type="number" step="0.01" min="0" max="1" value={vf.taxRate}
-                    onChange={(e) => setVf((p) => ({ ...p, taxRate: e.target.value }))}
+                    onChange={(e) => setVf((p) => ({...p, taxRate:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Free shipping over ($)</label>
                   <input type="number" min="0" value={vf.freeShippingThreshold}
-                    onChange={(e) => setVf((p) => ({ ...p, freeShippingThreshold: e.target.value }))}
+                    onChange={(e) => setVf((p) => ({...p, freeShippingThreshold:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Lead time (days)</label>
                   <input type="number" min="0" value={vf.leadTimeDays}
-                    onChange={(e) => setVf((p) => ({ ...p, leadTimeDays: e.target.value }))}
+                    onChange={(e) => setVf((p) => ({...p, leadTimeDays:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Notes</label>
-                  <input type="text" value={vf.notes}
-                    onChange={(e) => setVf((p) => ({ ...p, notes: e.target.value }))}
+                  <input type="text" value={vf.notes} onChange={(e) => setVf((p) => ({...p, notes:e.target.value}))}
                     className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 </div>
               </div>
               <div className="flex gap-2">
-                <Btn onClick={saveVendor} disabled={saving || !vf.name} v="primary" sm>Save vendor</Btn>
+                <Btn onClick={saveVendor} disabled={saving || !vf.name} sm>Save vendor</Btn>
                 <Btn onClick={cancelVendorEdit} v="secondary" sm>Cancel</Btn>
               </div>
             </div>
@@ -1177,8 +921,8 @@ function VendorsTab({ data, setData, role, userName }) {
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-gray-800 mb-1.5">{v.name}</div>
                       <div className="flex gap-2 flex-wrap">
-                        <span className={"px-1.5 py-0.5 rounded text-xs font-medium " + (v.currency === "USD" ? "bg-orange-100 text-orange-700" : "bg-blue-100 text-blue-700")}>{v.currency}</span>
-                        {+v.taxRate > 0 && <span className="text-xs text-gray-500">Tax {(+v.taxRate * 100).toFixed(0)}%</span>}
+                        <span className={"px-1.5 py-0.5 rounded text-xs font-medium " + (v.currency==="USD"?"bg-orange-100 text-orange-700":"bg-blue-100 text-blue-700")}>{v.currency}</span>
+                        {+v.taxRate > 0 && <span className="text-xs text-gray-500">Tax {(+v.taxRate*100).toFixed(0)}%</span>}
                         {+v.freeShippingThreshold > 0 && <span className="text-xs text-gray-500">Free ship {f$(+v.freeShippingThreshold)}+</span>}
                         {+v.leadTimeDays > 0 && <span className="text-xs text-gray-500">~{v.leadTimeDays}d lead</span>}
                       </div>
@@ -1198,13 +942,12 @@ function VendorsTab({ data, setData, role, userName }) {
         </div>
       )}
 
-      {/* Catalogue */}
       {section === "catalogue" && (
         <div className="space-y-4">
           {isManager && unconfirmed.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
               <SectionHead>Unconfirmed Categories — {unconfirmed.length} item{unconfirmed.length !== 1 ? "s" : ""}</SectionHead>
-              <p className="text-xs text-gray-500 mb-3">These were auto-categorized when submitted. Confirm or change the category.</p>
+              <p className="text-xs text-gray-500 mb-3">Auto-categorized when submitted. Confirm or change as needed.</p>
               <div className="space-y-2">
                 {unconfirmed.map((c) => (
                   <div key={c.id} className="flex items-center justify-between gap-3 bg-white rounded-lg border border-amber-100 p-3 flex-wrap">
@@ -1212,8 +955,7 @@ function VendorsTab({ data, setData, role, userName }) {
                       <div className="font-medium text-sm text-gray-800">{c.name}</div>
                       <div className="text-xs text-gray-400">{[c.supplier, c.catNo, c.unit].filter(Boolean).join(" · ")}</div>
                     </div>
-                    <select defaultValue={c.category}
-                      onChange={(e) => confirmCategory(c.id, e.target.value)}
+                    <select defaultValue={c.category} onChange={(e) => confirmCategory(c.id, e.target.value)}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
                       {ALL_CATS.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
                     </select>
@@ -1224,14 +966,10 @@ function VendorsTab({ data, setData, role, userName }) {
           )}
           <Card>
             <div className="p-4 border-b border-gray-100">
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                All Items ({data.catalogue.length})
-              </span>
+              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">All Items ({data.catalogue.length})</span>
             </div>
             {data.catalogue.length === 0 ? (
-              <div className="p-10 text-center text-gray-400 text-sm">
-                The catalogue builds automatically as orders are submitted
-              </div>
+              <div className="p-10 text-center text-gray-400 text-sm">Catalogue builds automatically as orders are submitted</div>
             ) : (
               <div className="divide-y divide-gray-50">
                 {data.catalogue.map((c) => (
@@ -1242,9 +980,7 @@ function VendorsTab({ data, setData, role, userName }) {
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <span className="text-xs text-gray-500">{c.category}</span>
-                      {!c.categoryConfirmed && (
-                        <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded">Unconfirmed</span>
-                      )}
+                      {!c.categoryConfirmed && <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded">Unconfirmed</span>}
                     </div>
                   </div>
                 ))}
@@ -1254,123 +990,83 @@ function VendorsTab({ data, setData, role, userName }) {
         </div>
       )}
 
-      {/* Settings */}
-      {section === "settings" && (
+      {section === "settings" && isManager && (
         <div className="space-y-4">
-          {/* Top-up request (members) */}
-          {!isManager && (
-            <Card className="p-5">
-              <SectionHead>Request Budget Top-up</SectionHead>
-              <div className="flex gap-2 items-end flex-wrap">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">Amount ($)</label>
-                  <input type="number" min="0" value={tuAmount}
-                    onChange={(e) => setTuAmount(e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                </div>
-                <div className="flex-1 min-w-40">
-                  <label className="block text-xs text-gray-500 mb-1">Reason</label>
-                  <input type="text" value={tuReason}
-                    onChange={(e) => setTuReason(e.target.value)}
-                    placeholder="e.g. Urgent reagent restock"
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                </div>
-                <Btn onClick={submitTopUp} disabled={tuSaving || !tuAmount} sm>Request</Btn>
+          {pendingTopUps.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+              <SectionHead>Top-up Requests — {pendingTopUps.length} pending</SectionHead>
+              <div className="space-y-2">
+                {pendingTopUps.map((req) => (
+                  <div key={req.id} className="flex items-center justify-between bg-white rounded-lg border border-amber-100 p-3 gap-3 flex-wrap">
+                    <div>
+                      <span className="font-medium text-sm text-gray-800">{req.requestedBy}</span>
+                      <span className="text-gray-300 mx-2">·</span>
+                      <span className="font-semibold text-gray-800">{f$(req.amount)}</span>
+                      {req.reason && <span className="text-xs text-gray-400 ml-2">— {req.reason}</span>}
+                      <div className="text-xs text-gray-400">{fmtDate(req.requestedAt)}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Btn onClick={() => resolveTopUp(req.id, true)} disabled={saving} v="green" sm>Approve</Btn>
+                      <Btn onClick={() => resolveTopUp(req.id, false)} disabled={saving} v="red" sm>Reject</Btn>
+                    </div>
+                  </div>
+                ))}
               </div>
-              {tuSuccess && <div className="text-xs text-emerald-600 mt-2">Top-up request sent to manager.</div>}
-            </Card>
+            </div>
           )}
-
-          {isManager && (
-            <>
-              {/* Pending top-up requests */}
-              {pendingTopUps.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-                  <SectionHead>Top-up Requests — {pendingTopUps.length} pending</SectionHead>
-                  <div className="space-y-2">
-                    {pendingTopUps.map((req) => (
-                      <div key={req.id} className="flex items-center justify-between bg-white rounded-lg border border-amber-100 p-3 gap-3 flex-wrap">
-                        <div>
-                          <span className="font-medium text-sm text-gray-800">{req.requestedBy}</span>
-                          <span className="text-gray-300 mx-2">·</span>
-                          <span className="font-semibold text-gray-800">{f$(req.amount)}</span>
-                          {req.reason && <span className="text-xs text-gray-400 ml-2">— {req.reason}</span>}
-                          <div className="text-xs text-gray-400">{fmtDate(req.requestedAt)}</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Btn onClick={() => resolveTopUp(req.id, true)} disabled={saving} v="green" sm>Approve</Btn>
-                          <Btn onClick={() => resolveTopUp(req.id, false)} disabled={saving} v="red" sm>Reject</Btn>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Budget pool */}
-              <Card className="p-5">
-                <SectionHead>Budget Pool</SectionHead>
-                <div className="text-xs text-gray-400 mb-3">
-                  Auto-resets on the 1st of each month. Current balance: <strong className="text-gray-600">{f$(data.budgetPool.balance)}</strong>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Monthly allocation ($)</label>
-                    <input type="number" min="0" value={pf.monthlyAllocation}
-                      onChange={(e) => setPf((p) => ({ ...p, monthlyAllocation: e.target.value }))}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Consumables allocation ($)</label>
-                    <input type="number" min="0" value={pf.consumablesAllocation}
-                      onChange={(e) => setPf((p) => ({ ...p, consumablesAllocation: e.target.value }))}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                  </div>
-                </div>
-              </Card>
-
-              {/* Procurement settings */}
-              <Card className="p-5">
-                <SectionHead>Procurement Settings</SectionHead>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Auto-approve under ($)</label>
-                    <input type="number" min="0" value={sf.autoApproveThreshold}
-                      onChange={(e) => setSf((p) => ({ ...p, autoApproveThreshold: +e.target.value }))}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">USD → CAD rate</label>
-                    <input type="number" min="1" step="0.01" value={sf.usdRate}
-                      onChange={(e) => setSf((p) => ({ ...p, usdRate: +e.target.value }))}
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="block text-xs text-gray-500 mb-1">Notification email (for orders over threshold)</label>
-                    <input type="email" value={sf.notificationEmail}
-                      onChange={(e) => setSf((p) => ({ ...p, notificationEmail: e.target.value }))}
-                      placeholder="e.g. madhu@example.com"
-                      className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                    <div className="text-xs text-gray-400 mt-1">Note: email delivery requires a Resend or SendGrid integration — field saved for future use.</div>
-                  </div>
-                </div>
-              </Card>
-
-              {/* Member names */}
-              <Card className="p-5">
-                <SectionHead>Lab Member Names</SectionHead>
-                <p className="text-xs text-gray-400 mb-2">One name per line. These appear in the name picker at login.</p>
-                <textarea rows={7} value={(sf.memberNames || []).join("\n")}
-                  onChange={(e) => setSf((p) => ({ ...p, memberNames: e.target.value.split("\n").map((n) => n.trim()).filter(Boolean) }))}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none" />
-              </Card>
-
-              <div className="flex items-center gap-3">
-                <Btn onClick={saveSettings} disabled={saving}>Save all settings</Btn>
-                {settingsSaved && <span className="text-xs text-emerald-600">Saved.</span>}
+          <Card className="p-5">
+            <SectionHead>Budget Pool</SectionHead>
+            <div className="text-xs text-gray-400 mb-3">Auto-resets on the 1st of each month. Current balance: <strong className="text-gray-600">{f$(data.budgetPool.balance)}</strong></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Monthly allocation ($)</label>
+                <input type="number" min="0" value={pf.monthlyAllocation}
+                  onChange={(e) => setPf((p) => ({...p, monthlyAllocation:e.target.value}))}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
               </div>
-            </>
-          )}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Consumables allocation ($)</label>
+                <input type="number" min="0" value={pf.consumablesAllocation}
+                  onChange={(e) => setPf((p) => ({...p, consumablesAllocation:e.target.value}))}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+            </div>
+          </Card>
+          <Card className="p-5">
+            <SectionHead>Procurement Settings</SectionHead>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Auto-approve under ($)</label>
+                <input type="number" min="0" value={sf.autoApproveThreshold}
+                  onChange={(e) => setSf((p) => ({...p, autoApproveThreshold:+e.target.value}))}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">USD → CAD rate</label>
+                <input type="number" min="1" step="0.01" value={sf.usdRate}
+                  onChange={(e) => setSf((p) => ({...p, usdRate:+e.target.value}))}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">Notification email (orders over threshold)</label>
+                <input type="email" value={sf.notificationEmail}
+                  onChange={(e) => setSf((p) => ({...p, notificationEmail:e.target.value}))}
+                  placeholder="e.g. madhu@example.com"
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+              </div>
+            </div>
+          </Card>
+          <Card className="p-5">
+            <SectionHead>Lab Member Names</SectionHead>
+            <p className="text-xs text-gray-400 mb-2">Fallback list if the GMS has no people loaded yet. One name per line.</p>
+            <textarea rows={7} value={(sf.memberNames||[]).join("\n")}
+              onChange={(e) => setSf((p) => ({...p, memberNames:e.target.value.split("\n").map((n) => n.trim()).filter(Boolean)}))}
+              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none" />
+          </Card>
+          <div className="flex items-center gap-3">
+            <Btn onClick={saveSettings} disabled={saving}>Save all settings</Btn>
+            {settingsSaved && <span className="text-xs text-emerald-600">Saved.</span>}
+          </div>
         </div>
       )}
     </div>
@@ -1379,46 +1075,41 @@ function VendorsTab({ data, setData, role, userName }) {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 export default function Procurement() {
-  const [role, setRole] = useState(null);
+  const [role,     setRole]     = useState(null);
   const [userName, setUserName] = useState(null);
-  const [data, setData] = useState(BLANK);
-  const [grants, setGrants] = useState([]);
-  const [loaded, setLoaded] = useState(false);
-  const [tab, setTab] = useState("queue");
+  const [data,     setData]     = useState(BLANK);
+  const [grants,   setGrants]   = useState([]);
+  const [loaded,   setLoaded]   = useState(false);
+  const [tab,      setTab]      = useState("queue");
+
+  // If navigating from the grant dashboard (?from=dashboard), skip the password screen
+  const [autoMgr] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("from") === "dashboard";
+  });
 
   const load = useCallback(async function() {
     try {
       const json = await apiLoad();
-      if (json.data) {
-        setData(maybeResetPool(safeData(json.data)));
-      }
-    } catch (e) {
-      console.error("Load failed:", e);
-    }
+      if (json.data) setData(maybeResetPool(safeData(json.data)));
+    } catch (e) { console.error("Load failed:", e); }
     setLoaded(true);
   }, []);
 
-  async function loadGrants() {
-    try {
-      const g = await apiLoadGrants();
-      setGrants(g);
-    } catch {}
+  async function loadGrantData() {
+    try { setGrants(await apiLoadGrants()); } catch {}
   }
 
-  function handleLogin(r, n) {
-    setRole(r);
-    setUserName(n);
-  }
+  function handleLogin(r, n) { setRole(r); setUserName(n); }
 
   useEffect(function() {
     if (role) {
       load();
-      if (role === "manager") loadGrants();
+      if (role === "manager") loadGrantData();
     }
   }, [role, load]);
 
   const pendingCount = data.orders.filter((o) => o.status === "pending").length;
-
   const TABS = [
     ["queue",   role === "manager" && pendingCount > 0 ? `Queue (${pendingCount})` : "Queue"],
     ["orders",  "Orders"],
@@ -1426,15 +1117,12 @@ export default function Procurement() {
     ["vendors", "Vendors"],
   ];
 
-  if (!role) return <LoginScreen onLogin={handleLogin} />;
+  if (!role) return <LoginScreen onLogin={handleLogin} autoMgr={autoMgr} />;
 
   if (!loaded) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50 text-gray-400">
-        <div className="text-center">
-          <div className="text-lg font-medium text-gray-600 mb-2">Lab Procurement</div>
-          <div className="text-sm">Loading...</div>
-        </div>
+        <div className="text-center"><div className="text-lg font-medium text-gray-600 mb-2">Lab Procurement</div><div className="text-sm">Loading...</div></div>
       </div>
     );
   }
@@ -1451,8 +1139,7 @@ export default function Procurement() {
             <div>
               <div className="font-medium text-base">Yachie Lab — Procurement</div>
               <div className="text-blue-300 text-xs mt-1">
-                {userName} · <span className="capitalize">{role}</span>
-                {" "}· Pool remaining: {f$(data.budgetPool.balance)}
+                {userName} · <span className="capitalize">{role}</span> · Pool: {f$(data.budgetPool.balance)} remaining
               </div>
             </div>
             <a href="/" className="text-blue-300 hover:text-white text-xs transition-colors whitespace-nowrap">← Grant Dashboard</a>
@@ -1460,15 +1147,13 @@ export default function Procurement() {
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
             {TABS.map(([k, l]) => (
               <button key={k} onClick={() => setTab(k)}
-                style={tab !== k ? { color: "rgba(255,255,255,0.75)" } : {}}
-                className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap "
-                  + (tab === k ? "bg-gray-50 text-blue-900 font-medium" : "hover:bg-black/10")}>
+                style={tab !== k ? { color:"rgba(255,255,255,0.75)" } : {}}
+                className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab === k ? "bg-gray-50 text-blue-900 font-medium" : "hover:bg-black/10")}>
                 {l}
               </button>
             ))}
           </div>
         </div>
-
         <div className="p-4 max-w-4xl mx-auto">
           {tab === "queue" && (
             <div className="space-y-4">
@@ -1476,10 +1161,11 @@ export default function Procurement() {
                 <ApprovalQueue data={data} setData={setData} userName={userName} grants={grants} />
               )}
               <OrderForm data={data} setData={setData} userName={userName} />
+              {role === "member" && <TopUpRequest data={data} setData={setData} userName={userName} />}
             </div>
           )}
           {tab === "orders"  && <OrdersTab  data={data} setData={setData} role={role} userName={userName} grants={grants} />}
-          {tab === "spend"   && <SpendTab   data={data} grants={grants} />}
+          {tab === "spend"   && <SpendTab   data={data} grants={grants} role={role} />}
           {tab === "vendors" && <VendorsTab data={data} setData={setData} role={role} userName={userName} />}
         </div>
       </div>
