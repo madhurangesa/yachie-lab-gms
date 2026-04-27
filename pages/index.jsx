@@ -671,24 +671,7 @@ function PerGrantChart({ ag, fc, data }) {
     ag.forEach((g, gi) => {
       if (sel === "all" || sel === g.id) r["b"+gi] = row["b"+gi];
     });
-    // Add actuals running balance — only for months that have actuals entered
-    if (sel !== "all" && selIdx >= 0) {
-      const g = ag[selIdx];
-      if (g) {
-        const md = addMo(FC0, idx);
-        const monthKey = md.toISOString().slice(0, 7);
-        // Only show a point if this exact month has an actual entered
-        const thisMonthActual = (D.actuals || []).find((a) => a.grantId === g.id && a.month === monthKey);
-        if (thisMonthActual) {
-          // actual_balance = forecast_balance + (forecast_spend - actual_spend)
-          // If actual == forecast, lines overlap. If actual > forecast, line goes lower.
-          const fcBal = row["b"+selIdx] || 0;
-          const fcSpend = (row["p"+selIdx]||0) + (row["r"+selIdx]||0) + (row["idc"+selIdx]||0);
-          const actualSpend = +thisMonthActual.amount || 0;
-          r["actualBal"+selIdx] = Math.round(fcBal + (fcSpend - actualSpend));
-        }
-      }
-    }
+
     return r;
   });
 
@@ -754,9 +737,7 @@ function PerGrantChart({ ag, fc, data }) {
             if (!show) return null;
             return <Line key={g.id} type="monotone" dataKey={key} name={g.code} stroke={GC[gi%GC.length]} strokeWidth={sel===g.id?2.5:1.5} dot={false} connectNulls />;
           })}
-          {sel !== "all" && selIdx >= 0 && (
-            <Line type="monotone" dataKey={"actualBal"+selIdx} name="Actual balance" stroke="#276221" strokeWidth={2} strokeDasharray="4 2" dot={false} connectNulls />
-          )}
+
         </LineChart>
       </ResponsiveContainer>
       {sel !== "all" && selIdx >= 0 && <GrantSummary g={ag[selIdx]} gi={selIdx} fc={fc} />}
@@ -1317,17 +1298,36 @@ function getFYBreakdown(data, grantId, fc) {
     });
   });
 
-  return Object.values(fyMap).map((fy) => ({
-    ...fy,
-    personnel: Math.round(fy.personnel),
-    research:  Math.round(fy.research),
-    idc:       Math.round(fy.idc),
-    inflows:   Math.round(fy.inflows),
-    total:     Math.round(fy.personnel + fy.research + fy.idc),
-    net:       Math.round(fy.inflows - fy.personnel - fy.research - fy.idc),
-    cats:      cats[fy.fy] || {},
-    people:    people[fy.fy] || {},
-  }));
+  // Build actuals per FY
+  const actualsMap = {};
+  (D.actuals || []).filter((a) => a.grantId === grantId).forEach((a) => {
+    if (!a.month) return;
+    const d = new Date(a.month + "-01T00:00:00Z");
+    const month = d.getUTCMonth();
+    const year  = d.getUTCFullYear();
+    const fyYear = month >= 3 ? year + 1 : year;
+    const fyKey  = "FY" + fyYear;
+    if (!actualsMap[fyKey]) actualsMap[fyKey] = 0;
+    actualsMap[fyKey] += +a.amount || 0;
+  });
+
+  return Object.values(fyMap).map((fy) => {
+    const actualTotal = actualsMap[fy.fy] ? Math.round(actualsMap[fy.fy]) : null;
+    const forecastTotal = Math.round(fy.personnel + fy.research + fy.idc);
+    return {
+      ...fy,
+      personnel:    Math.round(fy.personnel),
+      research:     Math.round(fy.research),
+      idc:          Math.round(fy.idc),
+      inflows:      Math.round(fy.inflows),
+      total:        forecastTotal,
+      net:          Math.round(fy.inflows - fy.personnel - fy.research - fy.idc),
+      actualTotal,
+      variance:     actualTotal !== null ? actualTotal - forecastTotal : null,
+      cats:         cats[fy.fy] || {},
+      people:       people[fy.fy] || {},
+    };
+  });
 }
 
 // ── Actuals vs Forecast Panel ────────────────────────────────────────────────
@@ -1524,9 +1524,20 @@ function Grants({ data, setData, fc }) {
                       Research {f$(fy.research)}
                     </button>
                     <span className="text-xs text-gray-500">IDC {f$(fy.idc)}</span>
-                    <span className="text-xs font-medium text-gray-800">Total {f$(fy.total)}</span>
+                    <span className="text-xs font-medium text-gray-800">Forecast {f$(fy.total)}</span>
                     <span className="text-xs text-green-700">Inflows {f$(fy.inflows)}</span>
                     <span className={"text-xs font-medium " + (fy.net>=0?"text-green-700":"text-red-600")}>Net {fy.net>=0?"+":""}{f$(fy.net)}</span>
+                    {fy.actualTotal !== null && (
+                      <span className="text-xs text-gray-400 mx-1">|</span>
+                    )}
+                    {fy.actualTotal !== null && (
+                      <span className="text-xs font-medium text-gray-700">Actual {f$(fy.actualTotal)}</span>
+                    )}
+                    {fy.variance !== null && (
+                      <span className={"text-xs font-medium px-1.5 py-0.5 rounded " + (Math.abs(fy.variance) < 500 ? "bg-green-100 text-green-700" : fy.variance > 0 ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700")}>
+                        {fy.variance > 0 ? "+" : ""}{f$(fy.variance)} vs forecast
+                      </span>
+                    )}
                   </div>
                   {expandedFYSection[expandedGrant+fy.fy] === "personnel" && (
                     <div className="px-6 py-2 bg-white">
