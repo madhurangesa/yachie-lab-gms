@@ -680,16 +680,12 @@ function PerGrantChart({ ag, fc, data }) {
         // Only show a point if this exact month has an actual entered
         const thisMonthActual = (D.actuals || []).find((a) => a.grantId === g.id && a.month === monthKey);
         if (thisMonthActual) {
-          // Running balance = starting balance + inflows received so far - cumulative actuals
-          const startBal = fc[0] ? (fc[0]["b"+selIdx] || 0) : +g.totalAward;
-          const cumulativeActuals = (D.actuals || [])
-            .filter((a) => a.grantId === g.id && a.month <= monthKey)
-            .reduce((s, a) => s + (+a.amount || 0), 0);
-          // Add inflows that have landed up to and including this month
-          const cumulativeInflows = (D.inflows || [])
-            .filter((i) => i.grantId === g.id && i.date && i.date.slice(0,7) <= monthKey)
-            .reduce((s, i) => s + (+i.amount || 0), 0);
-          r["actualBal"+selIdx] = Math.round(startBal + cumulativeInflows - cumulativeActuals);
+          // actual_balance = forecast_balance + (forecast_spend - actual_spend)
+          // If actual == forecast, lines overlap. If actual > forecast, line goes lower.
+          const fcBal = row["b"+selIdx] || 0;
+          const fcSpend = (row["p"+selIdx]||0) + (row["r"+selIdx]||0) + (row["idc"+selIdx]||0);
+          const actualSpend = +thisMonthActual.amount || 0;
+          r["actualBal"+selIdx] = Math.round(fcBal + (fcSpend - actualSpend));
         }
       }
     }
@@ -2621,7 +2617,9 @@ export default function Home() {
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
             {TABS.map(([k,l]) => (
-              <button key={k} onClick={() => setTab(k)} className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab===k?"bg-gray-50 text-blue-900 font-medium":"text-white/70 hover:text-white hover:bg-black/20")}>{l}</button>
+              <button key={k} onClick={() => setTab(k)}
+                style={tab!==k ? {color:"rgba(255,255,255,0.75)"} : {}}
+                className={"px-4 py-2 text-sm rounded-t-md transition-colors whitespace-nowrap " + (tab===k?"bg-gray-50 text-blue-900 font-medium":"hover:bg-black/10")}>{l}</button>
             ))}
           </div>
         </div>
