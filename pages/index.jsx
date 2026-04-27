@@ -1540,7 +1540,20 @@ function Grants({ data, setData, fc }) {
             })}
           </tbody>
         </table>
-        {actualsGrant && (() => {
+
+        {D.inflows.length > 0 && (
+          <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+            <span className="text-xs text-gray-500">
+              {D.inflows.length} inflow{D.inflows.length!==1?"s":""} across {D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length} grant{D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length!==1?"s":""}
+            </span>
+            <span className="text-sm font-medium text-green-700">
+              Total scheduled: {f$(D.inflows.reduce((s,i)=>s+(+i.amount||0),0))}
+            </span>
+          </div>
+        )}
+      </Card>
+
+      {actualsGrant && (() => {
           const g = D.grants.find((g) => g.id === actualsGrant);
           if (!g) return null;
           // Get last 12 months + next 3 months
@@ -1643,17 +1656,6 @@ function Grants({ data, setData, fc }) {
             </div>
           );
         })()}
-        {D.inflows.length > 0 && (
-          <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-            <span className="text-xs text-gray-500">
-              {D.inflows.length} inflow{D.inflows.length!==1?"s":""} across {D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length} grant{D.grants.filter(g=>D.inflows.some(i=>i.grantId===g.id)).length!==1?"s":""}
-            </span>
-            <span className="text-sm font-medium text-green-700">
-              Total scheduled: {f$(D.inflows.reduce((s,i)=>s+(+i.amount||0),0))}
-            </span>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
