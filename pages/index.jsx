@@ -1327,6 +1327,120 @@ function getFYBreakdown(data, grantId, fc) {
   }));
 }
 
+// ── Actuals vs Forecast Panel ────────────────────────────────────────────────
+function ActualsPanel({ grantId, data, fc, setData, onClose }) {
+  const D = safe(data);
+  const g = D.grants.find((gr) => gr.id === grantId);
+  if (!g) return null;
+
+  const months = [];
+  const today = new Date();
+  for (let i = -11; i <= 2; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    months.push(d.toISOString().slice(0, 7));
+  }
+
+  const gi = D.grants.filter((gr) => gr.active).findIndex((gr) => gr.id === grantId);
+  const fc0 = new Date(FC0 + "T00:00:00Z");
+  const todayStr = today.toISOString().slice(0, 7);
+
+  function saveActual(month, amount) {
+    setData((prev) => {
+      const s = safe(prev);
+      const others = (s.actuals || []).filter((a) => !(a.grantId === grantId && a.month === month));
+      if (amount !== "" && amount !== null) {
+        s.actuals = [...others, { grantId, month, amount: +amount }];
+      } else {
+        s.actuals = others;
+      }
+      return s;
+    });
+  }
+
+  function saveNote(month, notes) {
+    setData((prev) => {
+      const s = safe(prev);
+      const idx = (s.actuals || []).findIndex((a) => a.grantId === grantId && a.month === month);
+      if (idx >= 0) {
+        s.actuals = s.actuals.map((a, i) => i === idx ? {...a, notes} : a);
+      }
+      return s;
+    });
+  }
+
+  return (
+    <div className="mt-4 border border-green-200 rounded-lg overflow-hidden">
+      <div className="bg-green-700 text-white px-4 py-2 flex items-center justify-between">
+        <div>
+          <span className="text-sm font-medium">{g.code} — Actuals vs Forecast</span>
+          <span className="text-xs text-green-200 ml-3">Enter total spend per month from Workday</span>
+        </div>
+        <button onClick={onClose} className="text-green-200 hover:text-white text-xs px-2 py-0.5 border border-green-500 rounded">Close</button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-gray-400 uppercase border-b border-gray-100 bg-gray-50">
+              <th className="py-2 px-3 text-left font-medium">Month</th>
+              <th className="py-2 px-3 text-left font-medium">Actual spend (Workday)</th>
+              <th className="py-2 px-3 text-left font-medium">Forecast spend</th>
+              <th className="py-2 px-3 text-left font-medium">Variance</th>
+              <th className="py-2 px-3 text-left font-medium">Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((month) => {
+              const existing = (D.actuals || []).find((a) => a.grantId === grantId && a.month === month);
+              const actualAmt = existing ? +existing.amount : null;
+              const monthIdx = Math.round((new Date(month + "-01T00:00:00Z") - fc0) / (1000*60*60*24*30.4));
+              const fcRow = fc[monthIdx];
+              const fcSpend = (fcRow && gi >= 0) ? ((fcRow["p"+gi]||0) + (fcRow["r"+gi]||0) + (fcRow["idc"+gi]||0)) : null;
+              const variance = (actualAmt !== null && fcSpend !== null) ? actualAmt - fcSpend : null;
+              const isFuture = month > todayStr;
+              return (
+                <tr key={month} className={"border-b border-gray-50 " + (isFuture ? "opacity-40" : "")}>
+                  <td className="py-2 px-3 font-medium text-gray-700">{month}</td>
+                  <td className="py-2 px-3">
+                    {!isFuture && (
+                      <input type="number"
+                        className="border border-gray-200 rounded px-2 py-1 text-sm w-32 focus:outline-none focus:border-green-400"
+                        placeholder="Enter amount"
+                        defaultValue={actualAmt !== null ? actualAmt : ""}
+                        onBlur={(e) => saveActual(month, e.target.value)}
+                      />
+                    )}
+                  </td>
+                  <td className="py-2 px-3 text-gray-600">{fcSpend !== null ? f$(Math.round(fcSpend)) : "—"}</td>
+                  <td className="py-2 px-3">
+                    {variance !== null ? (
+                      <span className={"font-medium " + (Math.abs(variance) < 200 ? "text-green-600" : variance > 0 ? "text-red-600" : "text-amber-600")}>
+                        {variance > 0 ? "+" : ""}{f$(Math.round(variance))}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td className="py-2 px-3">
+                    {!isFuture && (
+                      <input type="text"
+                        className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none"
+                        placeholder="Optional note"
+                        defaultValue={existing?.notes || ""}
+                        onBlur={(e) => saveNote(month, e.target.value)}
+                      />
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t border-gray-100">
+        Variance = Actual minus Forecast. Green = within $200. Red = over forecast. Amber = under forecast. Small variances are normal (payroll timing, rounding).
+      </div>
+    </div>
+  );
+}
+
 function Grants({ data, setData, fc }) {
   const D = safe(data);
   const [form, setForm] = useState(null);
@@ -1553,109 +1667,7 @@ function Grants({ data, setData, fc }) {
         )}
       </Card>
 
-      {actualsGrant && (() => {
-          const g = D.grants.find((g) => g.id === actualsGrant);
-          if (!g) return null;
-          // Get last 12 months + next 3 months
-          const months = [];
-          const today = new Date();
-          for (let i = -11; i <= 2; i++) {
-            const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
-            months.push(d.toISOString().slice(0, 7));
-          }
-          return (
-            <div className="mt-4 border border-green-200 rounded-lg overflow-hidden">
-              <div className="bg-green-700 text-white px-4 py-2 flex items-center justify-between">
-                <div>
-                  <span className="text-sm font-medium">{g.code} — Actuals vs Forecast</span>
-                  <span className="text-xs text-green-200 ml-3">Enter total spend per month from Workday</span>
-                </div>
-                <button onClick={() => setActualsGrant(null)} className="text-green-200 hover:text-white text-xs px-2 py-0.5 border border-green-500 rounded">Close</button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-xs text-gray-400 uppercase border-b border-gray-100 bg-gray-50">
-                    {["Month","Actual spend (Workday)","Forecast spend","Variance","Notes"].map((h) => (
-                      <th key={h} className="py-2 px-3 text-left font-medium whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {months.map((month) => {
-                      const existing = (D.actuals||[]).find((a) => a.grantId === g.id && a.month === month);
-                      const actualAmt = existing ? +existing.amount : null;
-                      // Get forecast spend for this month
-                      const fc0 = new Date(FC0 + "T00:00:00Z");
-                      const gi = D.grants.filter((g) => g.active).findIndex((gr) => gr.id === g.id);
-                      const monthIdx = Math.round((new Date(month + "-01T00:00:00Z") - fc0) / (1000*60*60*24*30.4));
-                      const fcRow = fc && fc[monthIdx];
-                      const fcSpend = fcRow ? (fcRow["p"+gi]||0) + (fcRow["r"+gi]||0) + (fcRow["idc"+gi]||0) : null;
-                      const variance = (actualAmt !== null && fcSpend !== null) ? actualAmt - fcSpend : null;
-                      const isFuture = month > today.toISOString().slice(0,7);
-                      return (
-                        <tr key={month} className={"border-b border-gray-50 " + (isFuture ? "opacity-40" : "")}>
-                          <td className="py-2 px-3 font-medium text-gray-700">{month}</td>
-                          <td className="py-2 px-3">
-                            {!isFuture && (
-                              <input
-                                type="number"
-                                className="border border-gray-200 rounded px-2 py-1 text-sm w-32 focus:outline-none focus:border-green-400"
-                                placeholder="Enter amount"
-                                defaultValue={actualAmt||""}
-                                onBlur={(e) => {
-                                  const val = e.target.value;
-                                  setData((prev) => {
-                                    const s = safe(prev);
-                                    const others = (s.actuals||[]).filter((a) => !(a.grantId===g.id && a.month===month));
-                                    if (val) {
-                                      s.actuals = [...others, { grantId: g.id, month, amount: +val, notes: existing?.notes||"" }];
-                                    } else {
-                                      s.actuals = others;
-                                    }
-                                    return s;
-                                  });
-                                }}
-                              />
-                            )}
-                          </td>
-                          <td className="py-2 px-3 text-gray-600">{fcSpend !== null ? f$(Math.round(fcSpend)) : "—"}</td>
-                          <td className="py-2 px-3">
-                            {variance !== null ? (
-                              <span className={"font-medium " + (Math.abs(variance) < 200 ? "text-green-600" : variance > 0 ? "text-red-600" : "text-amber-600")}>
-                                {variance > 0 ? "+" : ""}{f$(Math.round(variance))}
-                              </span>
-                            ) : "—"}
-                          </td>
-                          <td className="py-2 px-3">
-                            {!isFuture && (
-                              <input
-                                type="text"
-                                className="border border-gray-200 rounded px-2 py-1 text-xs w-40 focus:outline-none"
-                                placeholder="Optional note"
-                                defaultValue={existing?.notes||""}
-                                onBlur={(e) => {
-                                  const val = e.target.value;
-                                  setData((prev) => {
-                                    const s = safe(prev);
-                                    const idx = (s.actuals||[]).findIndex((a) => a.grantId===g.id && a.month===month);
-                                    if (idx >= 0) s.actuals[idx] = {...s.actuals[idx], notes: val};
-                                    return s;
-                                  });
-                                }}
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="px-4 py-2 bg-gray-50 text-xs text-gray-400 border-t border-gray-100">
-                Variance = Actual minus Forecast. Green = within $200. Red = over forecast. Amber = under forecast. Small variances are normal (payroll timing, rounding).
-              </div>
-            </div>
-          );
-        })()}
+      {actualsGrant && <ActualsPanel grantId={actualsGrant} data={data} fc={fc||[]} setData={setData} onClose={() => setActualsGrant(null)} />}
     </div>
   );
 }
