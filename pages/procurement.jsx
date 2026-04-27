@@ -106,7 +106,7 @@ async function apiLoadGrants() {
   const r = await fetch("/api/data?secret=" + API_SECRET);
   if (!r.ok) throw new Error("HTTP " + r.status);
   const json = await r.json();
-  return (json.data?.grants || []).filter((g) => g && g.active);
+  return (json.data?.grants || []).filter((g) => g && (g.active === true || g.active === "YES" || g.active === "yes"));
 }
 
 // ── UI primitives ─────────────────────────────────────────────────────────────
@@ -1082,7 +1082,7 @@ export default function Procurement() {
   const [loaded,   setLoaded]   = useState(false);
   const [tab,      setTab]      = useState("queue");
 
-  // If navigating from the grant dashboard (?from=dashboard), skip the password screen
+  // If navigating from the grant dashboard (?from=dashboard), auto-login as manager
   const [autoMgr] = useState(() => {
     if (typeof window === "undefined") return false;
     return new URLSearchParams(window.location.search).get("from") === "dashboard";
@@ -1101,6 +1101,14 @@ export default function Procurement() {
   }
 
   function handleLogin(r, n) { setRole(r); setUserName(n); }
+
+  // Auto-login as manager if coming from grant dashboard
+  useEffect(function() {
+    if (autoMgr && !role) {
+      setRole("manager");
+      setUserName("Lab Manager");
+    }
+  }, [autoMgr]);
 
   useEffect(function() {
     if (role) {
