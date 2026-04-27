@@ -149,18 +149,18 @@ async function apiLoadGrants() {
 
 // ── Shared UI components ─────────────────────────────────────────────────────
 function Btn({ onClick, children, v = "primary", sm, disabled, className = "" }) {
-  const base = "inline-flex items-center justify-center rounded font-medium transition-colors focus:outline-none whitespace-nowrap "
+  const base = "inline-flex items-center justify-center rounded font-medium transition-colors focus:outline-none whitespace-nowrap cursor-pointer "
     + (sm ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm");
   const variants = {
     primary:   "bg-blue-700 text-white hover:bg-blue-800 disabled:opacity-40",
     secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-40",
     green:     "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40",
     red:       "bg-red-600 text-white hover:bg-red-700 disabled:opacity-40",
-    ghost:     "text-gray-500 hover:text-gray-700 hover:bg-gray-100 disabled:opacity-40",
+    ghost:     "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-800 disabled:opacity-40",
   };
   return (
     <button onClick={onClick} disabled={disabled}
-      className={base + (variants[v] || variants.primary) + " " + className}>
+      className={base + " " + (variants[v] || variants.primary) + " " + className}>
       {children}
     </button>
   );
@@ -218,8 +218,7 @@ function LoginScreen({ onLogin }) {
   function handlePwSubmit() {
     if (pw === MGR_PASS) {
       setRole("manager");
-      fetchNames();
-      setStep("name");
+      setStep("name"); // manager goes straight to text input, no list
     } else if (pw === MEMBER_PASS) {
       setRole("member");
       fetchNames();
@@ -275,9 +274,21 @@ function LoginScreen({ onLogin }) {
       <Card className="p-8 w-full max-w-sm">
         <div className="text-center mb-6">
           <div className="text-2xl font-semibold text-gray-800">Who are you?</div>
-          <div className="text-sm text-gray-400 mt-1">Signing in as {role === "manager" ? "manager" : "lab member"}</div>
+          <div className="text-sm text-gray-400 mt-1">
+            {role === "manager" ? "Signing in as manager" : "Pick your name"}
+          </div>
         </div>
-        {loadingNames ? (
+        {role === "manager" ? (
+          <div className="mb-4">
+            <input autoFocus type="text" placeholder="Your name"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              onKeyDown={handleNameKey}
+            />
+            {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
+          </div>
+        ) : loadingNames ? (
           <div className="text-center text-gray-400 text-sm py-6">Loading...</div>
         ) : (
           <div className="mb-4">
@@ -308,7 +319,7 @@ function LoginScreen({ onLogin }) {
             {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
           </div>
         )}
-        <Btn onClick={handleNameSubmit} disabled={loadingNames} className="w-full">
+        <Btn onClick={handleNameSubmit} disabled={loadingNames && role !== "manager"} className="w-full">
           Enter
         </Btn>
       </Card>
