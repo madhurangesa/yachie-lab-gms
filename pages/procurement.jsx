@@ -552,7 +552,7 @@ function ApprovalQueue({ data, setData, userName, grants }) {
                     <select value={selectedGrant} onChange={(e) => setSelectedGrant(e.target.value)}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
                       <option value="">No grant assigned yet</option>
-                      {grants.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+                      {grants.map((g) => <option key={g.id} value={g.id}>{g.id}</option>)}
                     </select>
                     <Btn onClick={() => handleApprove(order.id)} disabled={saving} v="green" sm>Confirm approve</Btn>
                     <Btn onClick={cancelApprove} v="secondary" sm>Cancel</Btn>
@@ -641,7 +641,7 @@ function OrdersTab({ data, setData, role, userName, grants }) {
                         <select value={draftGrant} onChange={(e) => setDraftGrant(e.target.value)}
                           className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none">
                           <option value="">No grant</option>
-                          {grants.map((g) => <option key={g.id} value={g.id}>{g.name || g.id}</option>)}
+                          {grants.map((g) => <option key={g.id} value={g.id}>{g.id}</option>)}
                         </select>
                         <Btn onClick={() => saveGrantAssignment(order.id)} disabled={saving} v="green" sm>Save</Btn>
                         <Btn onClick={cancelEditGrant} v="secondary" sm>Cancel</Btn>
@@ -715,7 +715,7 @@ function SpendTab({ data, grants, role }) {
     if (mode === "grant") {
       if (key === "__unassigned__") return "Unassigned";
       const g = grants.find((g) => g.id === key);
-      return g ? (g.name || g.id) : key;
+      return g ? (g.id) : key;
     }
     return key;
   }
@@ -1142,7 +1142,7 @@ export default function Procurement() {
                 {userName} · <span className="capitalize">{role}</span> · Pool: {f$(data.budgetPool.balance)} remaining
               </div>
             </div>
-            <a href="/" className="text-blue-300 hover:text-white text-xs transition-colors whitespace-nowrap">← Grant Dashboard</a>
+            {role === "manager" && <a href="/" className="text-blue-300 hover:text-white text-xs transition-colors whitespace-nowrap">← Grant Dashboard</a>}
           </div>
           <div className="flex gap-0.5 px-4 pt-3 overflow-x-auto">
             {TABS.map(([k, l]) => (
