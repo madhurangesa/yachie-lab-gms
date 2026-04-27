@@ -679,11 +679,12 @@ function SpendTab({ data, role }) {
   const [mode,      setMode]      = useState("grant");
   const [fromMonth, setFromMonth] = useState(thisMonth());
   const [toMonth,   setToMonth]   = useState(thisMonth());
-  const [grants,    setGrants]    = useState([]);
+  const [grants,       setGrants]       = useState([]);
+  const [grantsReady,  setGrantsReady]  = useState(false);
 
   useEffect(function() {
-    if (!isManager) return;
-    apiLoadGrants().then(setGrants).catch(function() {});
+    if (!isManager) { setGrantsReady(true); return; }
+    apiLoadGrants().then(function(g) { setGrants(g); setGrantsReady(true); }).catch(function() { setGrantsReady(true); });
   }, [isManager]);
 
   const availableMonths = useMemo(() => {
@@ -765,7 +766,9 @@ function SpendTab({ data, role }) {
           </div>
         )}
       </div>
-      {rows.length === 0 ? (
+      {!grantsReady ? (
+        <div className="text-center text-gray-400 text-sm py-6">Loading...</div>
+      ) : rows.length === 0 ? (
         <div className="text-center text-gray-400 text-sm py-10">No approved orders yet</div>
       ) : (
         <div>
