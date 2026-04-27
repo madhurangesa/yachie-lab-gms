@@ -8,6 +8,8 @@ export function middleware(req) {
     pathname === "/login" ||
     pathname === "/api/login" ||
     pathname.startsWith("/api/data") ||
+    pathname.startsWith("/api/procurement") ||
+    pathname === "/procurement" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico" ||
     pathname === "/manifest.json" ||
