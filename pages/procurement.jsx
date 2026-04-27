@@ -15,7 +15,11 @@ import Head from "next/head";
 
 const MEMBER_PASS  = process.env.NEXT_PUBLIC_MEMBER_SECRET || "lab-member-2025";
 const API_SECRET   = process.env.NEXT_PUBLIC_LAB_SECRET    || "yachie-lab-2025";
-const HEADER_COLOR = "#1e3a5f";
+
+let _CONFIG = {};
+try { _CONFIG = require("../config.js"); } catch(e) {}
+const HEADER_COLOR = _CONFIG.headerColor || "#1e3a5f";
+const LAB_NAME     = _CONFIG.labName     || "Yachie Lab";
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 const f$  = (n) => (n == null || isNaN(n)) ? "$0" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
@@ -186,8 +190,8 @@ function LoginScreen({ onLogin, autoMgr }) {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
         <Card className="p-8 w-full max-w-sm">
           <div className="text-center mb-6">
-            <div className="text-2xl font-semibold text-gray-800">Lab Procurement</div>
-            <div className="text-sm text-gray-400 mt-1">Yachie Lab · UBC SBME</div>
+            <div className="text-2xl font-semibold text-gray-800">{LAB_NAME} Procurement</div>
+            <div className="text-sm text-gray-400 mt-1">UBC SBME</div>
           </div>
           <div className="mb-4">
             <label className="block text-sm text-gray-600 mb-1">Password</label>
@@ -1138,14 +1142,14 @@ export default function Procurement() {
   return (
     <>
       <Head>
-        <title>Procurement — Yachie Lab</title>
+        <title>Procurement — {LAB_NAME}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       <div className="min-h-screen bg-gray-50">
         <div className="text-white" style={{ background: HEADER_COLOR }}>
           <div className="px-5 pt-4 flex items-center justify-between gap-4">
             <div>
-              <div className="font-medium text-base">Yachie Lab — Procurement</div>
+              <div className="font-medium text-base">{LAB_NAME} — Procurement</div>
               <div className="text-blue-300 text-xs mt-1">
                 {userName} · <span className="capitalize">{role}</span> · Pool: {f$(data.budgetPool.balance)} remaining
               </div>
