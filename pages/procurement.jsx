@@ -68,7 +68,7 @@ const ALL_CATS = [
 ];
 
 // ── Data model ───────────────────────────────────────────────────────────────
-const BLANK_POOL     = { monthlyAllocation:5000, consumablesAllocation:2000, currentMonth:"", balance:5000, consumablesBalance:2000, topUpRequests:[] };
+const BLANK_POOL     = { monthlyAllocation:5000, consumablesAllocation:2000, currentMonth:"", balance:5000, consumablesBalance:2000 };
 const BLANK_SETTINGS = { autoApproveThreshold:500, notificationEmail:"", memberNames:[], usdRate:1.36 };
 const BLANK          = { orders:[], vendors:[], catalogue:[], budgetPool:{...BLANK_POOL}, settings:{...BLANK_SETTINGS} };
 
@@ -355,7 +355,7 @@ function OrderForm({ data, setData, userName }) {
     if (!filledItems.length) { setError("Add at least one item."); return; }
     if (filledItems.some((it) => !it.unitPrice && it.unitPrice !== 0)) { setError("Enter a unit price for each item."); return; }
     setSubmitting(true); setError("");
-    const isAuto = total < threshold;
+    const isAuto = total < threshold && total <= (+data.budgetPool.balance || 0);
     const newOrder = {
       id:uid(), submittedBy:userName, submittedAt:new Date().toISOString(),
       status: isAuto ? "auto-approved" : "pending",
@@ -370,7 +370,15 @@ function OrderForm({ data, setData, userName }) {
         if (!exists) newCatEntries.push({ id:uid(), name:it.name.trim(), category:it.category, categoryConfirmed:false, supplier:it.supplier||"", catNo:it.catNo||"", unit:it.unit||"" });
       }
     }
-    const newData = { ...data, orders:[...data.orders, newOrder], catalogue:[...data.catalogue, ...newCatEntries] };
+    const newBalance = isAuto
+      ? Math.max(0, (+data.budgetPool.balance || 0) - total)
+      : (+data.budgetPool.balance || 0);
+    const newData = {
+      ...data,
+      orders:[...data.orders, newOrder],
+      catalogue:[...data.catalogue, ...newCatEntries],
+      budgetPool:{ ...data.budgetPool, balance: newBalance },
+    };
     try {
       await apiSave(newData, userName);
       setData(newData); setItems([emptyItem()]); setVendorId(""); setNotes("");
@@ -448,7 +456,9 @@ function OrderForm({ data, setData, userName }) {
           <div className="flex items-center gap-2 text-sm flex-wrap">
             <span className="text-gray-500">Estimated total:</span>
             <span className="font-semibold text-gray-800">{f$(total)} CAD</span>
-            {total >= threshold
+            {total > (+data.budgetPool.balance || 0)
+              ? <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Pool low — will go to manager approval</span>
+              : total >= threshold
               ? <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Requires manager approval</span>
               : <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Will auto-approve (under {f$(threshold)})</span>}
           </div>
@@ -467,45 +477,6 @@ function OrderForm({ data, setData, userName }) {
   );
 }
 
-// ── Top-up Request (members only, shown in Queue tab) ────────────────────────
-function TopUpRequest({ data, setData, userName }) {
-  const [amount,  setAmount]  = useState("");
-  const [reason,  setReason]  = useState("");
-  const [saving,  setSaving]  = useState(false);
-  const [success, setSuccess] = useState(false);
-
-  async function handleSubmit() {
-    if (!amount) return;
-    setSaving(true);
-    const req = { id:uid(), requestedBy:userName, amount:+amount, reason:reason.trim(), requestedAt:new Date().toISOString(), status:"pending" };
-    const newData = { ...data, budgetPool:{ ...data.budgetPool, topUpRequests:[...(data.budgetPool.topUpRequests||[]), req] } };
-    await apiSave(newData, userName);
-    setData(newData); setAmount(""); setReason("");
-    setSaving(false); setSuccess(true); setTimeout(() => setSuccess(false), 4000);
-  }
-
-  return (
-    <Card className="p-5">
-      <SectionHead>Request Budget Top-up</SectionHead>
-      <div className="flex gap-2 items-end flex-wrap">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Amount ($)</label>
-          <input type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)}
-            className="border border-gray-300 rounded px-2 py-1.5 text-sm w-28 focus:outline-none focus:ring-1 focus:ring-blue-400" />
-        </div>
-        <div className="flex-1 min-w-40">
-          <label className="block text-xs text-gray-500 mb-1">Reason</label>
-          <input type="text" value={reason} onChange={(e) => setReason(e.target.value)}
-            placeholder="e.g. Urgent reagent restock"
-            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-        </div>
-        <Btn onClick={handleSubmit} disabled={saving || !amount}>Request top-up</Btn>
-      </div>
-      {success && <div className="text-xs text-emerald-600 mt-2">Top-up request sent to manager.</div>}
-    </Card>
-  );
-}
-
 // ── Approval Queue (manager only) ────────────────────────────────────────────
 function ApprovalQueue({ data, setData, userName, grants }) {
   const pending = data.orders.filter((o) => o.status === "pending");
@@ -518,9 +489,15 @@ function ApprovalQueue({ data, setData, userName, grants }) {
   async function handleApprove(orderId) {
     setSaving(true);
     const g = grants.find((g) => g.id === selectedGrant);
-    const newData = { ...data, orders:data.orders.map((o) => o.id !== orderId ? o : {
-      ...o, status:"approved", grantId:selectedGrant||null, grantCode:g ? (g.code||g.id) : null, approvedBy:userName, approvedAt:new Date().toISOString(),
-    })};
+    const order = data.orders.find((o) => o.id === orderId);
+    const newBalance = Math.max(0, (+data.budgetPool.balance || 0) - (+order?.totalCAD || 0));
+    const newData = {
+      ...data,
+      orders:data.orders.map((o) => o.id !== orderId ? o : {
+        ...o, status:"approved", grantId:selectedGrant||null, grantCode:g ? (g.code||g.id) : null, approvedBy:userName, approvedAt:new Date().toISOString(),
+      }),
+      budgetPool:{ ...data.budgetPool, balance: newBalance },
+    };
     await apiSave(newData, userName); setData(newData); setApprovingId(null); setSelectedGrant(""); setSaving(false);
   }
   async function handleReject(orderId) {
@@ -842,22 +819,6 @@ function VendorsTab({ data, setData, role, userName }) {
     setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 3000); setSaving(false);
   }
 
-  const pendingTopUps = (data.budgetPool.topUpRequests || []).filter((r) => r.status === "pending");
-
-  async function resolveTopUp(reqId, approve) {
-    setSaving(true);
-    const req = (data.budgetPool.topUpRequests || []).find((r) => r.id === reqId);
-    const newBalance = approve && req ? data.budgetPool.balance + (+req.amount||0) : data.budgetPool.balance;
-    const newData = {
-      ...data,
-      budgetPool: {
-        ...data.budgetPool,
-        balance: newBalance,
-        topUpRequests: (data.budgetPool.topUpRequests||[]).map((r) => r.id !== reqId ? r : { ...r, status:approve?"approved":"rejected" }),
-      },
-    };
-    await apiSave(newData, userName); setData(newData); setSaving(false);
-  }
 
   const sectionTabs = [
     ["vendors",   "Vendors"],
@@ -1204,7 +1165,6 @@ export default function Procurement() {
                 <ApprovalQueue data={data} setData={setData} userName={userName} grants={grants} />
               )}
               <OrderForm data={data} setData={setData} userName={userName} />
-              {role === "member" && <TopUpRequest data={data} setData={setData} userName={userName} />}
             </div>
           )}
           {tab === "orders"  && <OrdersTab  data={data} setData={setData} role={role} userName={userName} grants={grants} />}
