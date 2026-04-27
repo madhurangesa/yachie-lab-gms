@@ -556,7 +556,7 @@ function ApprovalQueue({ data, setData, userName, grants }) {
                     <select value={selectedGrant} onChange={(e) => setSelectedGrant(e.target.value)}
                       className="border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none">
                       <option value="">No grant assigned yet</option>
-                      {grants.map((g) => <option key={g.id} value={g.id}>{g.id}</option>)}
+                      {grants.map((g) => <option key={g.id} value={g.id}>{g.code || g.id}</option>)}
                     </select>
                     <Btn onClick={() => handleApprove(order.id)} disabled={saving} v="green" sm>Confirm approve</Btn>
                     <Btn onClick={cancelApprove} v="secondary" sm>Cancel</Btn>
@@ -645,7 +645,7 @@ function OrdersTab({ data, setData, role, userName, grants }) {
                         <select value={draftGrant} onChange={(e) => setDraftGrant(e.target.value)}
                           className="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none">
                           <option value="">No grant</option>
-                          {grants.map((g) => <option key={g.id} value={g.id}>{g.id}</option>)}
+                          {grants.map((g) => <option key={g.id} value={g.id}>{g.code || g.id}</option>)}
                         </select>
                         <Btn onClick={() => saveGrantAssignment(order.id)} disabled={saving} v="green" sm>Save</Btn>
                         <Btn onClick={cancelEditGrant} v="secondary" sm>Cancel</Btn>
@@ -653,7 +653,7 @@ function OrdersTab({ data, setData, role, userName, grants }) {
                     ) : (
                       <button onClick={() => startEditGrant(order)}
                         className="text-xs text-blue-600 hover:text-blue-800 underline underline-offset-2">
-                        {grant ? (grant.name || grant.id) : "Assign grant →"}
+                        {grant ? (grant.code || grant.id) : "Assign grant →"}
                       </button>
                     )
                   ) : null}
