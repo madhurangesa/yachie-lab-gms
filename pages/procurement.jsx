@@ -969,28 +969,6 @@ function VendorsTab({ data, setData, role, userName }) {
 
       {section === "settings" && isManager && (
         <div className="space-y-4">
-          {pendingTopUps.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
-              <SectionHead>Top-up Requests — {pendingTopUps.length} pending</SectionHead>
-              <div className="space-y-2">
-                {pendingTopUps.map((req) => (
-                  <div key={req.id} className="flex items-center justify-between bg-white rounded-lg border border-amber-100 p-3 gap-3 flex-wrap">
-                    <div>
-                      <span className="font-medium text-sm text-gray-800">{req.requestedBy}</span>
-                      <span className="text-gray-300 mx-2">·</span>
-                      <span className="font-semibold text-gray-800">{f$(req.amount)}</span>
-                      {req.reason && <span className="text-xs text-gray-400 ml-2">— {req.reason}</span>}
-                      <div className="text-xs text-gray-400">{fmtDate(req.requestedAt)}</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Btn onClick={() => resolveTopUp(req.id, true)} disabled={saving} v="green" sm>Approve</Btn>
-                      <Btn onClick={() => resolveTopUp(req.id, false)} disabled={saving} v="red" sm>Reject</Btn>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           <Card className="p-5">
             <SectionHead>Budget Pool</SectionHead>
             <div className="text-xs text-gray-400 mb-3">Auto-resets on the 1st of each month. Current balance: <strong className="text-gray-600">{f$(data.budgetPool.balance)}</strong></div>
